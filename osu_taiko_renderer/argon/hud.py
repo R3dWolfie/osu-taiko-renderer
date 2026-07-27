@@ -224,7 +224,7 @@ class ArgonHud:
         if getattr(self.cfg, "show_hit_counter", True) and getattr(scene, "counts", None) is not None:
             _g, _o, _m = scene.counts
             _cnp = h * 0.055
-            _cyy = int(h * 0.46)
+            _cyy = int(self.sim.geo.center_y + self.sim.geo.pf_h / 2.0) + int(h * 0.045)
             for _v, _lb, _cl in ((_g, "GREAT", (95, 200, 255)),
                                  (_o, "OK", (150, 235, 90)),
                                  (_m, "MISS", (255, 95, 95))):

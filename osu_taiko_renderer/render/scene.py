@@ -870,11 +870,6 @@ class TaikoSim:
             sp.append(Sprite(g.drum_x, cy, g.drum_d, g.drum_d, "argon_drum_idle",
                              (1, 1, 1, 1)))
 
-        # mascot (pippidon): IN FRONT of the drum (feet visible on it) but BEHIND
-        # the notes/objects — lazer DrawableTaikoMascot layer.
-        if self.sk_mascot:
-            sp.extend(self._mascot_sprites(t))
-
         # --- hit target: Argon double circle + white bars. A skin lane
         # (taiko-bar-right / taiko-bar-left) carries its own target mark, so
         # skip the Argon overlay when the skin provides the lane. ---
@@ -1080,6 +1075,11 @@ class TaikoSim:
             sp.append(Sprite(x, cy, d, d, key, (1, 1, 1, na)))
             if kp > 0.001:        # kiai beat flash on the note (additive white)
                 sp.append(Sprite(x, cy, d, d, "argon_note_flash", (1, 1, 1, kp * na)))
+
+        # mascot (pippidon): IN FRONT of the playfield/notes (drawn last, on top)
+        # per Red — lazer draws the mascot over the play area.
+        if self.sk_mascot:
+            sp.extend(self._mascot_sprites(t))
 
         # R3D intro splash -- topmost intro element, over the idle scene
         if self.logo_start_ms is not None:
