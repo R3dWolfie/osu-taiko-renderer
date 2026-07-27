@@ -3,3 +3,29 @@ R3D osu-taiko
 Copyright (C) 2026 Cool Adults
 Licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later).
 See the LICENSE file for the full text.
+
+
+=== ATTRIBUTION — third-party credit ===
+
+peppy / ppy Pty Ltd — osu!
+    This renderer reproduces osu! gameplay, timing, judgment, scoring and HUD
+    behaviour by porting logic from osu! by Dean Herbert (peppy) and ppy:
+      - github.com/ppy/osu            (MIT)
+      - github.com/ppy/osu-framework  (MIT)
+    Ports are behavioural/algorithmic re-implementations in Python; the exact
+    C# sources are cited in the module and function docstrings they came from.
+    No osu! game assets are bundled — osu!'s skins, beatmaps, audio and default
+    art are CC BY-NC and are NOT included here; this repo ships only original
+    or procedurally-generated art.
+  Ports cover osu!taiko gameplay, judgment, scoring and HUD logic from
+  osu.Game.Rulesets.Taiko and osu.Game (Argon HUD components), MIT.
+
+danser-go — Wieku (Sebastian Krajewski)
+    github.com/Wieku/danser-go  (GPL-3.0)
+    danser-go's rendering architecture was studied as the behavioural
+    reference while building these in-house engines, and the R3D bot invokes
+    danser-go directly to generate some preview thumbnails. Grateful credit to
+    Wieku and the danser contributors.
+
+osu! is a rhythm game by peppy / ppy Pty Ltd (osu.ppy.sh). This project is an
+independent, unofficial renderer and is not affiliated with or endorsed by ppy.
