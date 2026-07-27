@@ -65,24 +65,41 @@ def _chevron_mask(n, asterisk=False, y_off=0.0):
     return np.array(img).astype(np.float32) / 255.0
 
 
+def _as_rgba(im):
+    """Force an image array to (H, W, 4) uint8 so skins that ship RGB or
+    greyscale note art don't break compositing."""
+    if im.ndim == 2:
+        im = np.stack([im, im, im, np.full_like(im, 255)], axis=-1)
+    elif im.shape[-1] == 3:
+        im = np.concatenate(
+            [im, np.full(im.shape[:2] + (1,), 255, im.dtype)], axis=-1)
+    return im
+
+
 def compose_skin_note(hc, overlay, tint, n=_N):
     """A legacy-skin taiko note: `taikohitcircle` multiply-tinted by the note
     colour (don red / kat blue / drumroll gold) with the untinted white
     `taikohitcircleoverlay` composited on top. hc/overlay are RGBA arrays."""
+    hc = _as_rgba(hc)
     base = np.array(Image.fromarray(hc).resize((n, n), Image.LANCZOS)).astype(np.float32)
-    t = np.array(tint, np.float32) / 255.0
-    base[..., :3] *= t
+    base[..., :3] *= np.array(tint, np.float32) / 255.0
     if overlay is not None:
         # osu! stacks taikohitcircleoverlay on the circle at its NATIVE size,
-        # CENTRED (the overlay is often a different size than the circle) — not
-        # stretched to the circle size. Scale it by overlay/circle ratio.
+        # CENTRED — the overlay may be SMALLER or LARGER than the circle (skins
+        # vary widely). Scale by the overlay/circle ratio and composite only the
+        # overlapping region so any size/offset is safe.
+        overlay = _as_rgba(overlay)
         osz = max(1, int(round(n * (overlay.shape[0] / hc.shape[0]))))
         o = np.array(Image.fromarray(overlay).resize((osz, osz), Image.LANCZOS)).astype(np.float32)
-        off0 = (n - osz) // 2
-        reg = base[off0:off0 + osz, off0:off0 + osz]
-        a = o[..., 3:4] / 255.0
-        reg[..., :3] = reg[..., :3] * (1 - a) + o[..., :3] * a
-        reg[..., 3:4] = reg[..., 3:4] + a * (255.0 - reg[..., 3:4])
+        off = (n - osz) // 2
+        by0, bx0 = max(0, off), max(0, off)
+        by1, bx1 = min(n, off + osz), min(n, off + osz)
+        if by1 > by0 and bx1 > bx0:
+            oc = o[by0 - off:by1 - off, bx0 - off:bx1 - off]
+            reg = base[by0:by1, bx0:bx1]
+            a = oc[..., 3:4] / 255.0
+            reg[..., :3] = reg[..., :3] * (1 - a) + oc[..., :3] * a
+            reg[..., 3:4] = reg[..., 3:4] + a * (255.0 - reg[..., 3:4])
     return np.clip(base, 0, 255).astype(np.uint8)
 
 
