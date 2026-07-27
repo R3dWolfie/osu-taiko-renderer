@@ -62,8 +62,11 @@ class TaikoSkin:
         case-insensitive); else frame 0 of an animation (name-0@2x.png then
         name-0.png) — many skins ship judgement graphics only as animation
         sequences (taiko-hit100-0.png, taiko-hit0-0.png, ...)."""
-        for cand in (f"{name}@2x.png", f"{name}.png",
-                     f"{name}-0@2x.png", f"{name}-0.png"):
+        # osu! rule: an ANIMATION (name-0) takes priority over the static
+        # name.png when both exist (a skin blanks GREAT via a 1x1 taiko-hit300-0
+        # while shipping a legacy taiko-hit300.png). So check -0 frames FIRST.
+        for cand in (f"{name}-0@2x.png", f"{name}-0.png",
+                     f"{name}@2x.png", f"{name}.png"):
             p = self._files.get(cand.lower())
             if p is not None:
                 return p
