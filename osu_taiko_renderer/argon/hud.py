@@ -285,7 +285,7 @@ class ArgonHud:
         # UR value
         ur = self.sim.ur_at(t)
         if ur > 0:
-            tex = self.bold.render(f"{ur:.0f} UR", int(h * 0.016), color=_LABEL)
+            tex = self.bold.render(f"{ur:.2f} UR", int(h * 0.016), color=_LABEL)
             _blit(rgb, tex, cx, by - bh - 4, "bc")
 
     # --- results screen (Argon ranking panel) -------------------------------
