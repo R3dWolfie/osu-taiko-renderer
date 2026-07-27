@@ -73,10 +73,16 @@ def compose_skin_note(hc, overlay, tint, n=_N):
     t = np.array(tint, np.float32) / 255.0
     base[..., :3] *= t
     if overlay is not None:
-        o = np.array(Image.fromarray(overlay).resize((n, n), Image.LANCZOS)).astype(np.float32)
+        # osu! stacks taikohitcircleoverlay on the circle at its NATIVE size,
+        # CENTRED (the overlay is often a different size than the circle) — not
+        # stretched to the circle size. Scale it by overlay/circle ratio.
+        osz = max(1, int(round(n * (overlay.shape[0] / hc.shape[0]))))
+        o = np.array(Image.fromarray(overlay).resize((osz, osz), Image.LANCZOS)).astype(np.float32)
+        off0 = (n - osz) // 2
+        reg = base[off0:off0 + osz, off0:off0 + osz]
         a = o[..., 3:4] / 255.0
-        base[..., :3] = base[..., :3] * (1 - a) + o[..., :3] * a
-        base[..., 3:4] = base[..., 3:4] + a * (255.0 - base[..., 3:4])
+        reg[..., :3] = reg[..., :3] * (1 - a) + o[..., :3] * a
+        reg[..., 3:4] = reg[..., 3:4] + a * (255.0 - reg[..., 3:4])
     return np.clip(base, 0, 255).astype(np.uint8)
 
 
