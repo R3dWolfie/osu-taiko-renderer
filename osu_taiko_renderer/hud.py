@@ -44,6 +44,8 @@ def _mod_labels(mods: int) -> list[str]:
         if mods & bit and name not in seen:
             if name == "DT" and (mods & 512):
                 continue
+            if name == "SD" and (mods & 16384):
+                continue  # perfect icon already covers it (PF = SD|Perfect)
             out.append(name); seen.add(name)
     return out
 
