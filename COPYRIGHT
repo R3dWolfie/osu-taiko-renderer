@@ -29,3 +29,10 @@ danser-go — Wieku (Sebastian Krajewski)
 
 osu! is a rhythm game by peppy / ppy Pty Ltd (osu.ppy.sh). This project is an
 independent, unofficial renderer and is not affiliated with or endorsed by ppy.
+
+
+BUNDLED FONT — assets/fonts/Nunito[wght].ttf is the Nunito variable font by
+Vernon Adams, Cyreal, Jacques Le Bailly and the Nunito Project Authors,
+redistributed under the SIL Open Font License 1.1 (bundled at
+assets/fonts/OFL.txt; the licence must travel with the font). "Nunito" is a
+Reserved Font Name. It renders the skinless "Argon league" text.
