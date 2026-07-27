@@ -263,11 +263,12 @@ def render_core(
     # HUD: legacy (true-to-skin) when the skin ships a score font, else Argon.
     from osu_taiko_renderer.argon.hud import ArgonHud
     from osu_taiko_renderer.hud.skin_hud import LegacyHud
-    _lh = LegacyHud(cfg.resolution, meta, bm, first, last, sim, sim.skin)
-    if _lh.has_fonts():
-        hud = _lh
-    else:
-        hud = ArgonHud(cfg.resolution, meta, bm, first, last, sim, cfg=cfg)
+    # ArgonHud is the single HUD: it renders the skin's digit font + scorebar HP
+    # bar per-element (SkinDigitFont / SkinHealthBar) with Argon fallback, while
+    # keeping Argon's progress bar / key counter / hit-error bar / title chrome
+    # that the legacy HUD lacked. (Was: swap to LegacyHud iff the skin shipped a
+    # score-N font, which discarded the HP bar + skin font for lazer skins.)
+    hud = ArgonHud(cfg.resolution, meta, bm, first, last, sim, cfg=cfg)
     # lazer's BreakOverlay (countdown + progress bar + CURRENT PROGRESS info
     # + slide-in chevrons) — break_overlay.py, a 1:1 port of
     # osu.Game/Screens/Play/BreakOverlay.cs on this engine's CPU compositing

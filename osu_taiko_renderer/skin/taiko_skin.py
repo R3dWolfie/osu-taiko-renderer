@@ -21,6 +21,41 @@ class TaikoSkin:
             for p in self.dir.iterdir():
                 if p.is_file():
                     self._files[p.name.lower()] = p
+        # skin.ini [Fonts] digit-font prefixes (default score/combo). Lazer skins
+        # often override to e.g. "main" so the digits are main-0.png...
+        self.score_prefix = "score"
+        self.combo_prefix = "combo"
+        self.score_overlap = 0
+        self.combo_overlap = 0
+        self._parse_ini()
+
+    def _parse_ini(self) -> None:
+        ini = self._files.get("skin.ini")
+        if ini is None:
+            return
+        try:
+            txt = ini.read_text(encoding="utf-8-sig", errors="replace")
+        except Exception:  # noqa: BLE001
+            return
+        section = ""
+        for line in txt.splitlines():
+            line = line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                section = line[1:-1].strip().lower()
+                continue
+            if section != "fonts" or ":" not in line:
+                continue
+            k, _, v = line.partition(":")
+            k, v = k.strip().lower(), v.strip()
+            if k == "scoreprefix" and v:
+                self.score_prefix = v
+            elif k == "comboprefix" and v:
+                self.combo_prefix = v
+            elif k in ("scoreoverlap", "combooverlap"):
+                try:
+                    setattr(self, k.replace("overlap", "_overlap"), int(v))
+                except ValueError:
+                    pass
 
     def find(self, name: str) -> Path | None:
         """Path for an element. Static file wins (name@2x.png then name.png,

@@ -131,9 +131,27 @@ class ArgonHud:
         self.wedge = np.array(Image.open(wp).convert("RGBA")) if wp.is_file() else None
         self._wedge_scaled = None
         self._results = None        # cached results-screen overlay (RGBA)
+        # Per-element skin HUD: the skin's digit font (score/combo) + scorebar HP
+        # bar when present, else Argon fallback. Argon keeps its own chrome
+        # (progress / key counter / hit-error / title) that the legacy HUD lacks.
+        from osu_taiko_renderer.hud.skin_hud_elements import (SkinDigitFont,
+                                                              SkinHealthBar)
+        _sk = getattr(sim, "skin", None)
+        self._sfont = SkinDigitFont(_sk, getattr(_sk, "score_prefix", "score"),
+                                    "-comma -dot -percent -x",
+                                    (getattr(_sk, "score_overlap", 0) or 0) / 100.0)
+        self._cfont = SkinDigitFont(_sk, getattr(_sk, "combo_prefix", "combo"),
+                                    "-x", (getattr(_sk, "combo_overlap", 0) or 0) / 100.0)
+        self._hpbar = SkinHealthBar(_sk)
 
     def _label(self, text, px, color=_LABEL):
         return self.bold.render(text, px, color=color)
+
+    def _num(self, font, text, px):
+        """Skin digit font if the skin ships one, else the Argon LED counter."""
+        if font is not None and font.present:
+            return font.render(text, px)
+        return self.counter.render(text, px)
 
     def _key_active(self, t, window=110):
         """Whether each key (B1..B4 = rim-L, centre-L, centre-R, rim-R) had a
@@ -152,6 +170,9 @@ class ArgonHud:
         w, h, t = self.w, self.h, scene.time_ms
         mx, my = int(w * 0.018), int(h * 0.03)
         lab_px = max(11, int(h * 0.016))
+        # skin scorebar HP bar (top-left) — Argon has none; push the top-left
+        # score block below it. No skin scorebar -> no bar (unchanged Argon).
+        hp_h = self._hpbar.draw(rgb, w, h, scene.hp, _blit) if self._hpbar.present else 0
 
         # --- score (top-left): angular wedge bracket + segmented number ---
         if self.wedge is not None:
@@ -160,27 +181,31 @@ class ArgonHud:
                 wh = int(ww * self.wedge.shape[0] / self.wedge.shape[1])
                 self._wedge_scaled = np.array(
                     Image.fromarray(self.wedge).resize((ww, wh), Image.LANCZOS))
-            _blit(rgb, self._wedge_scaled, 0, int(my * 0.2), "tl")
-        sc = self.counter.render(str(int(scene.score)), h * 0.052)
-        _blit(rgb, self._label("SCORE", lab_px), mx, my, "tl")
-        _blit(rgb, sc, mx, my + int(lab_px * 1.3), "tl")
+            _blit(rgb, self._wedge_scaled, 0, int(my * 0.2) + hp_h, "tl")
+        sc = self._num(self._sfont, str(int(scene.score)), h * 0.052)
+        _blit(rgb, self._label("SCORE", lab_px), mx, my + hp_h, "tl")
+        _blit(rgb, sc, mx, my + hp_h + int(lab_px * 1.3), "tl")
 
         # --- accuracy (top-right): whole big + fraction half + % ---
         pct = max(0.0, min(100.0, scene.accuracy * 100.0))
-        whole = str(int(pct))
-        frac = f"{pct:06.2f}".split(".")[1]
         ah = h * 0.05
         _blit(rgb, self._label("ACCURACY", lab_px), w - mx, my, "tr")
         ay = my + int(lab_px * 1.3)
-        pcttex = self.counter.render("%", ah * 0.5)
-        _blit(rgb, pcttex, w - mx, ay, "tr")
-        fx = w - mx - pcttex.shape[1]
-        fractex = self.counter.render(frac, ah * 0.5)
-        _blit(rgb, fractex, fx, ay, "tr")
-        dottex = self.counter.render(".", ah * 0.5)
-        _blit(rgb, dottex, fx - fractex.shape[1], ay, "tr")
-        wholetex = self.counter.render(whole, ah)
-        _blit(rgb, wholetex, fx - fractex.shape[1] - dottex.shape[1], ay, "tr")
+        if self._sfont.present:
+            _blit(rgb, self._sfont.render(f"{pct:.2f}%", ah * 0.62),
+                  w - mx, ay, "tr")
+        else:
+            whole = str(int(pct))
+            frac = f"{pct:06.2f}".split(".")[1]
+            pcttex = self.counter.render("%", ah * 0.5)
+            _blit(rgb, pcttex, w - mx, ay, "tr")
+            fx = w - mx - pcttex.shape[1]
+            fractex = self.counter.render(frac, ah * 0.5)
+            _blit(rgb, fractex, fx, ay, "tr")
+            dottex = self.counter.render(".", ah * 0.5)
+            _blit(rgb, dottex, fx - fractex.shape[1], ay, "tr")
+            wholetex = self.counter.render(whole, ah)
+            _blit(rgb, wholetex, fx - fractex.shape[1] - dottex.shape[1], ay, "tr")
 
         # --- pp (top-right, below accuracy) ---
         ppy = ay + int(ah) + int(lab_px * 0.6)
@@ -204,7 +229,7 @@ class ArgonHud:
                 px = x0 - int(w * 0.006)
 
         # --- combo (bottom-left) ---
-        ctex = self.counter.render(f"{int(scene.combo)}x", h * 0.072)
+        ctex = self._num(self._cfont, f"{int(scene.combo)}x", h * 0.072)
         _blit(rgb, ctex, mx, h - my, "bl")
         _blit(rgb, self._label("COMBO", lab_px, color=_ACCENT),
               mx, h - my - ctex.shape[0] - int(lab_px * 0.4), "bl")
