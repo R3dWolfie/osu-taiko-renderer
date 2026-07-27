@@ -325,7 +325,7 @@ class ArgonHud:
             gcol = _GRADE_COL.get(grade.upper(), _WHITE)
         # FEATURED player avatar — circular chip, top-centre, above the title.
         try:
-            from ..lb_cards import bake_avatar_circle
+            from osu_taiko_renderer.hud.lb_cards import bake_avatar_circle
             _av_px = int(h * 0.11)
             _chip = bake_avatar_circle(_av_px, m.player_name,
                                        getattr(self, "featured_avatar_bytes", None))
@@ -393,7 +393,7 @@ class ArgonHud:
         # fail-soft — a board must never break a render.
         if getattr(self, "board", None) is not None:
             try:
-                from ..lb_cards import draw_board
+                from osu_taiko_renderer.hud.lb_cards import draw_board
                 pim = Image.fromarray(out, "RGB").convert("RGBA")
                 draw_board(pim, self.board, max(0.0, min(1.0, op)))
                 out = np.asarray(pim.convert("RGB"))

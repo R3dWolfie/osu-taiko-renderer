@@ -78,8 +78,8 @@ from bisect import bisect_right
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from .argon.counter import ArgonCounter
-from .argon.font import get_font
+from osu_taiko_renderer.argon.counter import ArgonCounter
+from osu_taiko_renderer.argon.font import get_font
 
 # --- lazer constants (files cited in the module docstring) -------------------
 MIN_BREAK_DURATION = 650.0        # BreakPeriod.MIN_BREAK_DURATION (HasEffect)
@@ -135,7 +135,7 @@ def grade_display(accuracy: float, mods: int) -> str:
     (lazer_results.taiko_grade — single source for cutoffs) mapped to
     lazer's rank display strings, with the HD/FL silver adjustment lazer
     applies. Lazy import: lazer_results is a heavy results-screen module."""
-    from .lazer_results import taiko_grade
+    from osu_taiko_renderer.hud.lazer_results import taiko_grade
     g = taiko_grade(max(0.0, min(1.0, accuracy)))
     if mods & (_HD | _FL):
         if g == "SS":

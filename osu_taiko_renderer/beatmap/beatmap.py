@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .models import TaikoBeatmap, TaikoObject, TaikoType
+from osu_taiko_renderer.beatmap.models import TaikoBeatmap, TaikoObject, TaikoType
 
 # HitObject type bitfield
 _TYPE_CIRCLE = 1 << 0

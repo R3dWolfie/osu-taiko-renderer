@@ -19,12 +19,12 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .assets import build_textures
-from .beatmap import parse_beatmap
-from .gl import SpriteRenderer
-from .models import RenderConfig
-from .replay import parse_replay
-from .scene import TaikoSim
+from osu_taiko_renderer.skin.assets import build_textures
+from osu_taiko_renderer.beatmap.beatmap import parse_beatmap
+from osu_taiko_renderer.render.gl import SpriteRenderer
+from osu_taiko_renderer.beatmap.models import RenderConfig
+from osu_taiko_renderer.beatmap.replay import parse_replay
+from osu_taiko_renderer.render.scene import TaikoSim
 
 
 class TaikoRenderError(RuntimeError):
@@ -136,7 +136,7 @@ def _draw_lazer_results(cache, rgb, meta, bm, opacity, *, age_ms=None,
         if scr is False:                 # an earlier bake failed → plain frame
             return rgb
         if scr is None:
-            from .lazer_results import CatchLazerResults
+            from osu_taiko_renderer.hud.lazer_results import CatchLazerResults
             scr = CatchLazerResults((rgb.shape[1], rgb.shape[0]), meta, bm,
                                     board=board, osu_path=osu_path, sim=sim)
             cache["scr"] = scr
@@ -164,7 +164,7 @@ def render_core(
 ) -> Path:
     """Render from already-parsed beatmap/frames/meta. Shared by the osr path
     and tests."""
-    from .fonts import set_skin_font
+    from osu_taiko_renderer.skin.fonts import set_skin_font
     set_skin_font(cfg.skin_dir)
 
     # Phase 1: procedural taiko textures + simple HUD (no skin asset wiring yet).
@@ -235,7 +235,7 @@ def render_core(
     else:
         for key, rgba in build_textures(cfg.skin_dir).items():
             renderer.upload_texture(key, rgba)
-    from .assets import bake_logo_tile, logo_glow_rgba
+    from osu_taiko_renderer.skin.assets import bake_logo_tile, logo_glow_rgba
     renderer.upload_texture("logo_tile", bake_logo_tile())
     renderer.upload_texture("logo_glow", logo_glow_rgba())
     if bg is not None:
@@ -244,8 +244,8 @@ def render_core(
     total_dur_s = n_frames / cfg.fps
     proc = _spawn_ffmpeg(cfg, output_path, audio, start_ms, rate, total_dur_s)
     # HUD: legacy (true-to-skin) when the skin ships a score font, else Argon.
-    from .argon.hud import ArgonHud
-    from .skin_hud import LegacyHud
+    from osu_taiko_renderer.argon.hud import ArgonHud
+    from osu_taiko_renderer.hud.skin_hud import LegacyHud
     _lh = LegacyHud(cfg.resolution, meta, bm, first, last, sim, sim.skin)
     if _lh.has_fonts():
         hud = _lh
@@ -258,7 +258,7 @@ def render_core(
     # overlay (a Player-level component), so it is composited over the full
     # frame on BOTH HUD variants from one wiring point in _emit_gameplay.
     # Fed the same map-time [Events] breaks that drive the dim envelope.
-    from .break_overlay import LazerBreakOverlay
+    from osu_taiko_renderer.hud.break_overlay import LazerBreakOverlay
     break_overlay = LazerBreakOverlay(
         w, h, getattr(bm, "breaks", []) or [],
         mods=int(getattr(meta, "mods", 0) or 0))
@@ -266,14 +266,14 @@ def render_core(
     # circular spotlight fixed on the playfield hit target, combo-scaled with
     # an 800ms OutQuint fade. Composited OVER the playfield but UNDER the HUD
     # (both HUD variants) so score/combo/health stay visible. No-op without FL.
-    from .flashlight import TaikoFlashlight
+    from osu_taiko_renderer.render.flashlight import TaikoFlashlight
     flashlight = TaikoFlashlight(
         sim.geo, getattr(sim, "_rt", None), getattr(sim, "_cum", None),
         int(getattr(meta, "mods", 0) or 0))
-    from .argon.compositor import ArgonEffects, bloom as _bloom
+    from osu_taiko_renderer.argon.compositor import ArgonEffects, bloom as _bloom
     effects = ArgonEffects(sim.geo, cfg.skin_dir)
 
-    from .hud import draw_results
+    from osu_taiko_renderer.hud.hud import draw_results
     # results-screen map leaderboard (parity with std/catch): build + bake ONCE,
     # up front, so the outro just composites the pre-baked flank cards each
     # frame. Fully fail-soft — any problem leaves the plain results card (renders
@@ -281,7 +281,7 @@ def render_core(
     baked_board = None
     if cfg.show_results and getattr(cfg, "show_leaderboard", True):
         try:
-            from .lb_cards import build_taiko_board
+            from osu_taiko_renderer.hud.lb_cards import build_taiko_board
             baked_board = build_taiko_board(cfg, meta, bm, "")
         except Exception as e:  # noqa: BLE001 — a board must never break a render
             print(f"[taiko-renderer] leaderboard skipped: {e}", file=sys.stderr)
@@ -306,7 +306,7 @@ def render_core(
     # instance is built lazily on the first outro frame and cached here.
     if cfg.show_results:
         try:
-            from .lazer_results import set_featured_avatar_png
+            from osu_taiko_renderer.hud.lazer_results import set_featured_avatar_png
             set_featured_avatar_png(getattr(cfg, "featured_avatar_png", None))
         except Exception:  # noqa: BLE001 — avatar wiring never breaks a render
             pass
@@ -615,4 +615,4 @@ class _Hud:
         return np.asarray(img)
 
 
-from .fonts import font as _font  # skin-aware, host-robust font resolver
+from osu_taiko_renderer.skin.fonts import font as _font  # skin-aware, host-robust font resolver

@@ -9,8 +9,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from .models import RenderConfig
-from .render import render_taiko
+from osu_taiko_renderer.beatmap.models import RenderConfig
+from osu_taiko_renderer.render.render import render_taiko
 
 
 def _resolution(s: str) -> tuple[int, int]:
@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     # leaves the featured card on the procedural username chip.
     if args.featured_avatar_png is not None:
         try:
-            from . import lazer_results as _lr
+            from osu_taiko_renderer.hud import lazer_results as _lr
             _lr.set_featured_avatar_png(args.featured_avatar_png)
         except Exception:  # noqa: BLE001 — avatar wiring never breaks a render
             pass

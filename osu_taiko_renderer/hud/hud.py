@@ -231,4 +231,4 @@ def _ellipsize(draw, text: str, font, max_w: int) -> str:
     return (text + "…") if text else ""
 
 
-from .fonts import font as _font  # skin-aware, host-robust font resolver
+from osu_taiko_renderer.skin.fonts import font as _font  # skin-aware, host-robust font resolver

@@ -10,8 +10,8 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image, ImageDraw
 
-from .fonts import font as _font
-from .hud import _mod_labels
+from osu_taiko_renderer.skin.fonts import font as _font
+from osu_taiko_renderer.hud.hud import _mod_labels
 
 
 def _blit(rgb, src, x, y, anchor="tl"):
@@ -255,7 +255,7 @@ class LegacyHud:
             cx = w // 2
             # FEATURED player avatar — circular chip centred above the score.
             try:
-                from .lb_cards import bake_avatar_circle
+                from osu_taiko_renderer.hud.lb_cards import bake_avatar_circle
                 _chip = bake_avatar_circle(
                     int(h * 0.14), getattr(m, "player_name", ""),
                     getattr(self, "featured_avatar_bytes", None))
@@ -294,7 +294,7 @@ class LegacyHud:
         # in with the cross-fade). Only when a board was attached; fail-soft.
         if getattr(self, "board", None) is not None:
             try:
-                from .lb_cards import draw_board
+                from osu_taiko_renderer.hud.lb_cards import draw_board
                 pim = Image.fromarray(out, "RGB").convert("RGBA")
                 draw_board(pim, self.board, max(0.0, min(1.0, op)))
                 out = np.asarray(pim.convert("RGB"))

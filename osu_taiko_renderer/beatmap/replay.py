@@ -17,7 +17,7 @@ from pathlib import Path
 
 from osrparse import Replay
 
-from .models import ReplayMeta, TaikoFrame
+from osu_taiko_renderer.beatmap.models import ReplayMeta, TaikoFrame
 
 _SEED_DELTA = -12345
 _DON_BITS = 1 | 4   # M1, K1 (centre)

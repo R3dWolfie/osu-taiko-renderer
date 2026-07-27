@@ -182,7 +182,7 @@ class ArgonEffects:
         self._rng_cache: dict = {}      # (rt, piece, travel) -> (angle, dist)
         # Skin judgement images (taiko-hit300/100/0) — used for the gameplay
         # popups instead of Torus text when the skin provides them.
-        from ..taiko_skin import TaikoSkin
+        from osu_taiko_renderer.skin.taiko_skin import TaikoSkin
         skin = TaikoSkin(skin_dir)
         self._skin_judge = {}
         for res, name in (("great", "taiko-hit300"), ("ok", "taiko-hit100"),

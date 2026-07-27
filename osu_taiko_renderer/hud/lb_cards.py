@@ -31,7 +31,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from .fonts import font as _load_font  # catch's skin-aware, host-robust resolver
+from osu_taiko_renderer.skin.fonts import font as _load_font  # catch's skin-aware, host-robust resolver
 
 # render DB — same file + env override the std renderer uses (a symlink resolves
 # this path to state/db.sqlite on the render box). Local-only, read-only.
@@ -585,7 +585,7 @@ def build_taiko_board(cfg, meta, bm, replay_md5: str):
     the osu! GLOBAL scores the bot pre-fetched are used instead; any problem
     (missing/empty/invalid file) SILENTLY falls back to the render DB so the
     default path is never disturbed. Fully fail-soft — never raises."""
-    from . import leaderboard as lb
+    from osu_taiko_renderer.hud import leaderboard as lb
 
     W, H = cfg.resolution
     src = str(getattr(cfg, "leaderboard_source", "r3d") or "r3d").lower()
@@ -626,7 +626,7 @@ def build_taiko_board(cfg, meta, bm, replay_md5: str):
     # each side, cards vertically centred on the panel. Falls back to the
     # legacy clearance if the lazer module is unavailable.
     try:
-        from .lazer_results import PANEL_W as _PANEL_W
+        from osu_taiko_renderer.hud.lazer_results import PANEL_W as _PANEL_W
     except Exception:  # noqa: BLE001 — stripped checkout → legacy layout
         _PANEL_W = None
     kw = {}

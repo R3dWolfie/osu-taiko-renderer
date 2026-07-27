@@ -14,7 +14,7 @@ try:
 except Exception as e:  # noqa: BLE001
     raise RuntimeError("moderngl is required for the catch renderer") from e
 
-from .models import Sprite
+from osu_taiko_renderer.beatmap.models import Sprite
 
 _VERT = """
 #version 330

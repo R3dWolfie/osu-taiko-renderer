@@ -16,17 +16,17 @@ from __future__ import annotations
 import bisect
 import math
 
-from .argon import _const as AC
-from .argon import geometry as ag_geom
-from .dim import build_dim_envelope
-from .taiko_skin import TaikoSkin
-from .models import (
+from osu_taiko_renderer.argon import _const as AC
+from osu_taiko_renderer.argon import geometry as ag_geom
+from osu_taiko_renderer.render.dim import build_dim_envelope
+from osu_taiko_renderer.skin.taiko_skin import TaikoSkin
+from osu_taiko_renderer.beatmap.models import (
     SceneState,
     Sprite,
     TaikoType,
     od_to_hit_windows_ms,
 )
-from .replay import hit_events
+from osu_taiko_renderer.beatmap.replay import hit_events
 
 GREAT, OK, MISS = "great", "ok", "miss"
 
@@ -1018,7 +1018,7 @@ class TaikoSim:
         straight-alpha only, so the same radial glow texture is blended
         normally -- visually equivalent over the dark intro playfield (the
         same approximation the swell glow already uses)."""
-        from .effects import logo_alpha, logo_scale, LOGO_UI_SIZE
+        from osu_taiko_renderer.render.effects import logo_alpha, logo_scale, LOGO_UI_SIZE
         la = logo_alpha(t, self.logo_start_ms, self.first_spawn_ms)
         if la is None:
             return []
