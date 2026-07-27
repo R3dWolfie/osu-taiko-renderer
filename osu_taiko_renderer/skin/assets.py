@@ -268,6 +268,10 @@ def build_textures(skin_dir=None) -> dict[str, np.ndarray]:
                 break
             tex[f"pippidon_{_st}_{_i}"] = _fr
             _i += 1
+        if _i == 0:                               # static (un-numbered) -> single frame 0
+            _fr = skin.load(f"pippidon{_st}")
+            if _fr is not None and _fr.shape[0] > 2 and _fr.shape[1] > 2:
+                tex[f"pippidon_{_st}_0"] = _fr    # (skip 1x1 "hidden" placeholders)
     # --- the rest of the legacy taiko playfield (drum, hit target, judgements,
     # bar line, drumroll) — loaded raw; the scene/compositor use them when the
     # skin provides them, else fall back to Argon. ---

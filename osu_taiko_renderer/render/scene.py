@@ -171,6 +171,10 @@ class TaikoSim:
             _n = 0
             while self.skin.has(f"pippidon{_st}{_n}"):
                 _n += 1
+            if not _n and self.skin.has(f"pippidon{_st}"):
+                _sf = self.skin.load(f"pippidon{_st}")   # static single-frame mascot
+                if _sf is not None and _sf.shape[0] > 2 and _sf.shape[1] > 2:
+                    _n = 1                      # (skip 1x1 "hidden" placeholders)
             if _n:
                 self.mascot_counts[_st] = _n
         self.sk_mascot = bool(self.mascot_counts)
@@ -179,6 +183,8 @@ class TaikoSim:
         if self.sk_mascot:
             _s0 = "idle" if "idle" in self.mascot_counts else next(iter(self.mascot_counts))
             _im = self.skin.load(f"pippidon{_s0}0")
+            if _im is None:                      # static single-frame mascot
+                _im = self.skin.load(f"pippidon{_s0}")
             if _im is not None and _im.shape[0]:
                 self._mascot_aspect = _im.shape[1] / _im.shape[0]
                 _rows = (_im[..., 3] > 8).any(axis=1).nonzero()[0]
