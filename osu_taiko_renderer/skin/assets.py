@@ -245,7 +245,7 @@ def build_textures(skin_dir=None) -> dict[str, np.ndarray]:
     ov = skin.load("taikohitcircleoverlay")
     bc = skin.load("taikobigcircle")
     bov = skin.load("taikobigcircleoverlay")
-    DON, KAT, GOLD = (241, 0, 0), (0, 161, 241), (252, 83, 6)   # wiki tints
+    DON, KAT, GOLD = (235, 105, 85), (116, 177, 207), (252, 140, 70)  # lazer note colours
     if hc is not None:
         tex["argon_don"] = AT.compose_skin_note(hc, ov, DON)
         tex["argon_kat"] = AT.compose_skin_note(hc, ov, KAT)
