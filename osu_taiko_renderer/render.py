@@ -262,6 +262,14 @@ def render_core(
     break_overlay = LazerBreakOverlay(
         w, h, getattr(bm, "breaks", []) or [],
         mods=int(getattr(meta, "mods", 0) or 0))
+    # OsuModFlashlight (TaikoModFlashlight): darken each gameplay frame to a
+    # circular spotlight fixed on the playfield hit target, combo-scaled with
+    # an 800ms OutQuint fade. Composited OVER the playfield but UNDER the HUD
+    # (both HUD variants) so score/combo/health stay visible. No-op without FL.
+    from .flashlight import TaikoFlashlight
+    flashlight = TaikoFlashlight(
+        sim.geo, getattr(sim, "_rt", None), getattr(sim, "_cum", None),
+        int(getattr(meta, "mods", 0) or 0))
     from .argon.compositor import ArgonEffects, bloom as _bloom
     effects = ArgonEffects(sim.geo, cfg.skin_dir)
 
@@ -325,6 +333,7 @@ def render_core(
         nonlocal last_gameplay
         p_scene, p_exps, p_judges, p_drums = pending.popleft()
         out = effects.composite(raw, p_exps, p_judges, p_drums)
+        out = flashlight.composite(out, p_scene.time_ms)
         out = hud.overlay(out, p_scene)
         # lazer z-order: BreakOverlay is a LATER overlay-component child
         # than HUDOverlay (Player.createOverlayComponents) — composited
