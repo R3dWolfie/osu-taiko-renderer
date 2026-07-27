@@ -1067,5 +1067,5 @@ class TaikoSim:
                 if 0 <= age <= dur + AC.EXPLOSION_GREAT_IN_MS:
                     exps.append((o.kind is TaikoType.KAT, age, o.big, res))
             if 0 <= age <= AC.JUDGE_MOVE_MS:
-                judges.append((res, age, rt))
+                judges.append((res, age, rt, o.big))
         return exps, judges

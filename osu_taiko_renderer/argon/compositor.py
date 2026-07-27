@@ -190,6 +190,13 @@ class ArgonEffects:
             img = skin.load(name)
             if img is not None:
                 self._skin_judge[res] = img
+        # Strong/big-note variants (geki GREAT / big OK): skins ship these as
+        # taiko-hit300g / taiko-hit100k. Missing -> fall back to the normal
+        # result sprite (see _judge_tex).
+        for res, name in (("great_big", "taiko-hit300g"), ("ok_big", "taiko-hit100k")):
+            img = skin.load(name)
+            if img is not None:
+                self._skin_judge[res] = img
         # Honour the skin's judgement graphics whenever it ships ANY of them,
         # not just a plain GREAT — skins deliberately omit taiko-hit300 so a
         # normal GREAT shows nothing (e.g. "+39 nofinish"). Per-result absence
@@ -216,29 +223,35 @@ class ArgonEffects:
                                  .resize((dd, dd), Image.LANCZOS))
                 self._drum_scaled[(is_rim, left)] = _prebake_add(im8)
 
-    def _judge_tex(self, result):
-        if result not in self._jcache:
+    def _judge_tex(self, result, big=False):
+        # Big/strong notes prefer the geki/kiai sprite (taiko-hit300g / -100k)
+        # when the skin ships it, else fall back to the normal result sprite.
+        if self._use_skin_judge and big and (result + "_big") in self._skin_judge:
+            key = result + "_big"
+        else:
+            key = result
+        if key not in self._jcache:
             if self._use_skin_judge:
-                # Skin mode: the skin's sprite for this result, or None (no
-                # popup) when the skin omits it — e.g. no taiko-hit300 => a
-                # normal GREAT shows nothing ("+39 nofinish"). A fully
-                # transparent sprite also renders nothing downstream.
-                img = self._skin_judge.get(result)
+                # Skin mode: the skin's sprite for this key, or None (no popup)
+                # when the skin omits it — e.g. no taiko-hit300 => a normal GREAT
+                # shows nothing ("+39 nofinish"). A fully transparent sprite also
+                # renders nothing downstream.
+                img = self._skin_judge.get(key)
                 if img is None:
-                    self._jcache[result] = None
+                    self._jcache[key] = None
                 else:
                     th = int(self.geo.note_d * 1.1)
                     tw = max(1, int(th * img.shape[1] / img.shape[0]))
-                    self._jcache[result] = np.array(
+                    self._jcache[key] = np.array(
                         Image.fromarray(img).resize((tw, th), Image.LANCZOS))
             else:
                 # ArgonJudgementPiece: plain straight-alpha OsuFont text, no glow
                 # halo (the only burst is the separate RingExplosion).
                 px = self.geo.note_d * 0.46
-                self._jcache[result] = self.font.render(
+                self._jcache[key] = self.font.render(
                     _JUDGE_TEXT[result], px, color=_JUDGE_COL[result],
                     spacing=C.JUDGE_SPACING * self.geo.scale)
-        return self._jcache[result]
+        return self._jcache[key]
 
     _RING_SPEC = {"great": (4, 4, 1.0), "ok": (4, 0, 0.6)}   # (small,large,travel_x); miss none
 
@@ -305,8 +318,8 @@ class ArgonEffects:
             _add_prescaled(rgb, self._exp_scaled[(is_rim, big)],
                            g.target_x, g.center_y, a)
         # judgement popups: float up (-0.6→-1.0 pf_h), scale 1→1.4, fade out
-        for res, age, rt in judges:
-            tex = self._judge_tex(res)
+        for res, age, rt, big in judges:
+            tex = self._judge_tex(res, big)
             if tex is None:                 # skin mode, no sprite for this result
                 continue
             if not self._use_skin_judge:    # Argon RingExplosion only in Argon mode
