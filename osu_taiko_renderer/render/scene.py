@@ -802,9 +802,9 @@ class TaikoSim:
         frame = int(t * 0.06) % counts[state]          # AnimationFramerate 60
         pf_top = g.center_y - g.pf_h / 2.0
         vis = max(0.25, self._mascot_foot - self._mascot_head)
-        mh = (g.pf_h * 0.92) / vis                      # visible body ~0.92x lane height
+        mh = (g.pf_h * 1.05) / vis                      # visible body ~1.05x lane height
         mw = mh * self._mascot_aspect
-        feet_y = pf_top + g.pf_h * 0.06                 # feet AT the drum/lane top
+        feet_y = pf_top + g.pf_h * 0.30                 # feet DOWN on the drum (stands on it)
         cy = feet_y - (self._mascot_foot - 0.5) * mh    # place by real feet position
         cx = g.drum_x + g.drum_d * 0.45                 # over the input drum
         return [Sprite(cx, cy, mw, mh, f"pippidon_{state}_{frame}", (1, 1, 1, 1))]
