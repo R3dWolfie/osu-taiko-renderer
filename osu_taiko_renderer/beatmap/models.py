@@ -20,6 +20,26 @@ class TaikoType(Enum):
 
 
 @dataclass(frozen=True)
+class HitSample:
+    """osu! hitobject sample override (`normalSet:additionSet:index:volume:file`).
+    Zeros mean "inherit from the active timing point / [General] default"."""
+    normal_set: int = 0
+    addition_set: int = 0
+    index: int = 0
+    volume: int = 0
+    filename: str = ""
+
+
+@dataclass(frozen=True)
+class SamplePoint:
+    """Per-timing-point sample state (applies to every hit at/after its time)."""
+    time_ms: int
+    sample_set: int      # 0 auto, 1 normal, 2 soft, 3 drum
+    custom_index: int
+    volume: int
+
+
+@dataclass(frozen=True)
 class TaikoObject:
     """One taiko hit object on the scroll stream.
 
@@ -36,6 +56,8 @@ class TaikoObject:
     required_hits: int = 0
     scroll_vel: float = 0.0
     new_combo: bool = False
+    hit_sound: int = 0                 # raw hitSound bitfield (for audio)
+    hit_sample: 'HitSample | None' = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +94,8 @@ class TaikoBeatmap:
     bar_lines: list = field(default_factory=list)  # [(time_ms, scroll_vel, major)]
     kiai_ranges: list = field(default_factory=list)  # [(start_ms, end_ms)]
     timing: object = None                            # _Timing (beat grid for kiai)
+    sample_points: list = field(default_factory=list)  # [SamplePoint] for hitsounds
+    default_sample_set: str = "normal"                 # [General] SampleSet
 
     @property
     def length_ms(self) -> int:

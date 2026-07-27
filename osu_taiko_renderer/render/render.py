@@ -242,7 +242,24 @@ def render_core(
         renderer.upload_texture("bg", _bg_cover(bg, w, h, cfg.bg_blur))
 
     total_dur_s = n_frames / cfg.fps
-    proc = _spawn_ffmpeg(cfg, output_path, audio, start_ms, rate, total_dur_s)
+    # Per-note hitsound dub (taiko previously rendered music-only). Built from
+    # the sim's judged hits, aligned to the FINAL video timeline; amixed with
+    # the song in _spawn_ffmpeg. Fail-soft: any problem just drops the dub.
+    hitsound = None
+    if audio is not None:
+        try:
+            from osu_taiko_renderer.render.hitsounds import build_taiko_hitsound_track
+            _bdir = osu_path.parent if osu_path is not None else None
+            hitsound = build_taiko_hitsound_track(
+                notes=sim.notes, note_hit=sim.note_hit, beatmap=bm,
+                sample_dirs=[_bdir, cfg.skin_dir, cfg.default_skin_dir],
+                output_wav=output_path.with_suffix(".hits.wav"),
+                video_ms=total_dur_s * 1000.0, start_ms=start_ms, rate=rate)
+        except Exception as _e:  # noqa: BLE001 — hitsounds never break a render
+            print(f"[taiko-renderer] hitsound build skipped: {_e}", file=sys.stderr)
+            hitsound = None
+    proc = _spawn_ffmpeg(cfg, output_path, audio, start_ms, rate, total_dur_s,
+                         hitsound=hitsound)
     # HUD: legacy (true-to-skin) when the skin ships a score font, else Argon.
     from osu_taiko_renderer.argon.hud import ArgonHud
     from osu_taiko_renderer.hud.skin_hud import LegacyHud
@@ -467,7 +484,8 @@ def nvenc_target_bps(w: int, h: int, fps: float) -> int:
 
 
 def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
-                  start_ms: int, rate: float = 1.0, total_dur_s: float | None = None):
+                  start_ms: int, rate: float = 1.0, total_dur_s: float | None = None,
+                  hitsound: Path | None = None):
     w, h = cfg.resolution
     enc, dev = _probe_encoder(cfg)
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
@@ -477,6 +495,8 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
             "-i", "pipe:0"]
     if audio is not None:
         cmd += ["-i", str(audio)]
+    if audio is not None and hitsound is not None:
+        cmd += ["-i", str(hitsound)]
 
     # video codec + pixel path
     if enc == "h264_vaapi":
@@ -496,7 +516,18 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
                            music_volume=cfg.music_volume,
                            general_volume=cfg.general_volume,
                            audio_offset_ms=cfg.audio_offset_ms)
-        if af:
+        if hitsound is not None:
+            # [1:a] song -> music chain; [2:a] hitsound dub scaled by the preset
+            # effects (general) volume; amix without auto-normalise so neither
+            # side is ducked. Video (input 0) mapped explicitly.
+            hs_vol = max(0.0, cfg.general_volume / 100.0)
+            music_chain = af if af else "anull"
+            fc = ("[1:a]" + music_chain + "[m];"
+                  "[2:a]volume=" + f"{hs_vol:.3f}" + "[h];"
+                  "[m][h]amix=inputs=2:duration=longest:normalize=0:"
+                  "dropout_transition=0[aout]")
+            cmd += ["-filter_complex", fc, "-map", "0:v", "-map", "[aout]"]
+        elif af:
             cmd += ["-af", af]
         cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
 

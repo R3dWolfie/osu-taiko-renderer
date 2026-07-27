@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from osu_taiko_renderer.beatmap.models import TaikoBeatmap, TaikoObject, TaikoType
+from osu_taiko_renderer.beatmap.models import (TaikoBeatmap, TaikoObject,
+                                               TaikoType, HitSample, SamplePoint)
 
 # HitObject type bitfield
 _TYPE_CIRCLE = 1 << 0
@@ -85,6 +86,8 @@ def parse_beatmap(path: Path, *, mods: int = 0, lazer: bool = False) -> TaikoBea
         title=meta.get("Title", ""),
         artist=meta.get("Artist", ""),
         version=meta.get("Version", ""),
+        sample_points=list(getattr(timing, "sample_points", []) or []),
+        default_sample_set=(general.get("SampleSet", "Normal") or "Normal").lower(),
     )
 
 
@@ -132,6 +135,7 @@ class _Timing:
 def _parse_timing(block: str) -> _Timing:
     pts: list[tuple[float, float, bool]] = []
     uninh: list[tuple[float, float, int]] = []
+    samps: list = []
     for line in block.splitlines():
         line = line.strip()
         if not line:
@@ -144,12 +148,17 @@ def _parse_timing(block: str) -> _Timing:
         uninherited = True if len(parts) < 7 else parts[6].strip() == "1"
         meter = int(_f(parts[2], 4.0)) if len(parts) > 2 else 4
         pts.append((time, beat, uninherited))
+        s_set = int(_f(parts[3], 0.0)) if len(parts) > 3 else 0
+        s_idx = int(_f(parts[4], 0.0)) if len(parts) > 4 else 0
+        s_vol = int(_f(parts[5], 100.0)) if len(parts) > 5 else 100
+        samps.append(SamplePoint(int(time), s_set, s_idx, s_vol or 100))
         if uninherited and beat > 0:
             uninh.append((time, beat, meter if meter > 0 else 4))
     pts.sort(key=lambda p: p[0])
     uninh.sort(key=lambda p: p[0])
     tm = _Timing(pts)
     tm.uninherited = uninh
+    tm.sample_points = samps
     return tm
 
 
@@ -210,6 +219,18 @@ def _generate_bar_lines(timing: "_Timing", first_hit: float, last_hit: float):
 
 # --- hit objects --------------------------------------------------------------
 
+def _parse_hit_sample(field: str) -> HitSample:
+    """Parse `normalSet:additionSet:index:volume:filename` (any part optional)."""
+    p = (field or "").split(":")
+    def gi(i):
+        try:
+            return int(p[i]) if i < len(p) and p[i] != "" else 0
+        except ValueError:
+            return 0
+    return HitSample(gi(0), gi(1), gi(2), gi(3), p[4] if len(p) > 4 else "")
+
+
+
 def _parse_hit_objects(block: str, *, timing, slider_mult, od,
                        slider_tick_rate: float = 1.0,
                        is_for_taiko: bool = False) -> list[TaikoObject]:
@@ -232,8 +253,9 @@ def _parse_hit_objects(block: str, *, timing, slider_mult, od,
 
         if typ & _TYPE_CIRCLE:
             kind = TaikoType.KAT if (hs & (_HS_WHISTLE | _HS_CLAP)) else TaikoType.DON
+            _hsamp = _parse_hit_sample(f[5]) if len(f) > 5 else None
             out.append(TaikoObject(time, kind, big=big, scroll_vel=scroll,
-                                   new_combo=is_new))
+                                   new_combo=is_new, hit_sound=hs, hit_sample=_hsamp))
         elif typ & _TYPE_SLIDER:
             out.extend(_convert_slider(
                 f, time, hs, big, scroll, is_new,
