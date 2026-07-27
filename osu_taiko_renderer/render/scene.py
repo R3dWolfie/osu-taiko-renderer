@@ -30,6 +30,11 @@ from osu_taiko_renderer.beatmap.replay import hit_events
 
 GREAT, OK, MISS = "great", "ok", "miss"
 
+# Always render the judge’s HONEST judgments instead of fabricating misses to
+# match the .osr header miss total / max_combo (Red 2026-07-27, #25). Flip to
+# False to restore the header-count reconcile. Score still anchors to the .osr.
+_TAIKO_ALWAYS_HONEST = True
+
 # osu!lazer ScoreV3 total-score mod multipliers — ppy/osu#37967 (mode-agnostic;
 # identical table to the std/catch/mania engines). Rate mods (DT/HT) at the
 # standard rate; unlisted mods -> 1.0. Keyed by the osu! mod bit.
@@ -351,8 +356,12 @@ class TaikoSim:
         # the shipped greedy timing, split into the header's GREAT/OK by that
         # (shipped) timing error so a clean play is byte-identical.
         m = self.meta
-        hg = (int(getattr(m, "count_300", 0) or 0) if m is not None
-              else sum(1 for i in range(n) if not is_miss[i]))
+        if _TAIKO_ALWAYS_HONEST:
+            hg = sum(1 for r in st.res if r == GREAT)   # honest great/ok split
+        elif m is not None:
+            hg = int(getattr(m, "count_300", 0) or 0)
+        else:
+            hg = sum(1 for i in range(n) if not is_miss[i])
         hit_idx = [i for i in range(n) if not is_miss[i]]
         hit_idx.sort(key=lambda i: old_err[i])       # stable: ties keep note order
         results: list[tuple[int, str]] = [(0, MISS)] * n
@@ -426,6 +435,20 @@ class TaikoSim:
             self._maxcombo_target = 0
             self._maxcombo_after = honest_longest
             self._maxcombo_note = f"taiko: max combo {honest_longest} (honest)"
+            return is_miss
+        if _TAIKO_ALWAYS_HONEST:
+            # Honest judgments: do NOT fabricate misses to hit the header.
+            hg0 = int(getattr(m, "count_300", 0) or 0)
+            ho0 = int(getattr(m, "count_100", 0) or 0)
+            hm0 = int(getattr(m, "count_miss", 0) or 0)
+            T0 = int(getattr(m, "max_combo", 0) or 0)
+            self._maxcombo_target = T0
+            self._maxcombo_after = honest_longest
+            self._reconcile_note = (
+                f"taiko: HONEST kept {sim_g}/{sim_o}/{sim_m} "
+                f"(header {hg0}/{ho0}/{hm0} NOT forced)")
+            self._maxcombo_note = (
+                f"taiko: max combo {honest_longest} (honest; header {T0})")
             return is_miss
         hg = int(getattr(m, "count_300", 0) or 0)
         ho = int(getattr(m, "count_100", 0) or 0)
