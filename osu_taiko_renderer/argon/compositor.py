@@ -190,7 +190,11 @@ class ArgonEffects:
             img = skin.load(name)
             if img is not None:
                 self._skin_judge[res] = img
-        self._use_skin_judge = "great" in self._skin_judge
+        # Honour the skin's judgement graphics whenever it ships ANY of them,
+        # not just a plain GREAT — skins deliberately omit taiko-hit300 so a
+        # normal GREAT shows nothing (e.g. "+39 nofinish"). Per-result absence
+        # is handled as "no popup" in _judge_tex, not an Argon text fallback.
+        self._use_skin_judge = bool(self._skin_judge)
         # Pre-scale explosion textures to the two note sizes (resizing every
         # frame per active explosion was a render-time hotspot). Stored as
         # _prebake_add tuples (float32 rgb + alpha/255, alpha-bbox-cropped) so
@@ -214,19 +218,26 @@ class ArgonEffects:
 
     def _judge_tex(self, result):
         if result not in self._jcache:
-            if self._use_skin_judge and result in self._skin_judge:
-                img = self._skin_judge[result]
-                th = int(self.geo.note_d * 1.1)
-                tw = max(1, int(th * img.shape[1] / img.shape[0]))
-                self._jcache[result] = np.array(
-                    Image.fromarray(img).resize((tw, th), Image.LANCZOS))
-                return self._jcache[result]
-            # ArgonJudgementPiece: plain straight-alpha OsuFont text, no glow
-            # halo (the only burst is the separate RingExplosion). Just the text.
-            px = self.geo.note_d * 0.46
-            txt = self.font.render(_JUDGE_TEXT[result], px, color=_JUDGE_COL[result],
-                                   spacing=C.JUDGE_SPACING * self.geo.scale)
-            self._jcache[result] = txt
+            if self._use_skin_judge:
+                # Skin mode: the skin's sprite for this result, or None (no
+                # popup) when the skin omits it — e.g. no taiko-hit300 => a
+                # normal GREAT shows nothing ("+39 nofinish"). A fully
+                # transparent sprite also renders nothing downstream.
+                img = self._skin_judge.get(result)
+                if img is None:
+                    self._jcache[result] = None
+                else:
+                    th = int(self.geo.note_d * 1.1)
+                    tw = max(1, int(th * img.shape[1] / img.shape[0]))
+                    self._jcache[result] = np.array(
+                        Image.fromarray(img).resize((tw, th), Image.LANCZOS))
+            else:
+                # ArgonJudgementPiece: plain straight-alpha OsuFont text, no glow
+                # halo (the only burst is the separate RingExplosion).
+                px = self.geo.note_d * 0.46
+                self._jcache[result] = self.font.render(
+                    _JUDGE_TEXT[result], px, color=_JUDGE_COL[result],
+                    spacing=C.JUDGE_SPACING * self.geo.scale)
         return self._jcache[result]
 
     _RING_SPEC = {"great": (4, 4, 1.0), "ok": (4, 0, 0.6)}   # (small,large,travel_x); miss none
@@ -295,8 +306,11 @@ class ArgonEffects:
                            g.target_x, g.center_y, a)
         # judgement popups: float up (-0.6→-1.0 pf_h), scale 1→1.4, fade out
         for res, age, rt in judges:
-            self._ring_burst(rgb, res, age, rt, g)
             tex = self._judge_tex(res)
+            if tex is None:                 # skin mode, no sprite for this result
+                continue
+            if not self._use_skin_judge:    # Argon RingExplosion only in Argon mode
+                self._ring_burst(rgb, res, age, rt, g)
             p = age / C.JUDGE_MOVE_MS
             ease = 1.0 - (1.0 - p) ** 5                # OutQuint (move/scale)
             scale = 1.0 + 0.4 * ease

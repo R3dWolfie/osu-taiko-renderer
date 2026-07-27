@@ -23,8 +23,12 @@ class TaikoSkin:
                     self._files[p.name.lower()] = p
 
     def find(self, name: str) -> Path | None:
-        """Path for an element (tries name@2x.png then name.png, case-insensitive)."""
-        for cand in (f"{name}@2x.png", f"{name}.png"):
+        """Path for an element. Static file wins (name@2x.png then name.png,
+        case-insensitive); else frame 0 of an animation (name-0@2x.png then
+        name-0.png) — many skins ship judgement graphics only as animation
+        sequences (taiko-hit100-0.png, taiko-hit0-0.png, ...)."""
+        for cand in (f"{name}@2x.png", f"{name}.png",
+                     f"{name}-0@2x.png", f"{name}-0.png"):
             p = self._files.get(cand.lower())
             if p is not None:
                 return p
