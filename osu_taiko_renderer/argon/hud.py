@@ -154,6 +154,16 @@ class ArgonHud:
             return font.render(text, px)
         return self.counter.render(text, px)
 
+    @staticmethod
+    def _tint_lum(img, color):
+        """Recolour an RGBA glyph to `color` by luminance (keeps shape + alpha)
+        so the skin's cyan digit font can be coloured per judgement."""
+        out = img.astype(np.float32)
+        lum = (0.299 * out[..., 0] + 0.587 * out[..., 1] + 0.114 * out[..., 2]) / 255.0
+        for _i in range(3):
+            out[..., _i] = lum * color[_i]
+        return np.clip(out, 0, 255).astype(np.uint8)
+
     def _key_active(self, t, window=110):
         """Whether each key (B1..B4 = rim-L, centre-L, centre-R, rim-R) had a
         press within the last `window` ms — lights its activity bar."""
@@ -228,7 +238,10 @@ class ArgonHud:
             for _v, _lb, _cl in ((_g, "GREAT", (95, 200, 255)),
                                  (_o, "OK", (150, 235, 90)),
                                  (_m, "MISS", (255, 95, 95))):
-                _nt = self.bold.render(str(int(_v)), _cnp, color=_cl)
+                if self._sfont.present:
+                    _nt = self._tint_lum(self._sfont.render(str(int(_v)), _cnp), _cl)
+                else:
+                    _nt = self.bold.render(str(int(_v)), _cnp, color=_cl)
                 _blit(rgb, _nt, mx, _cyy, "tl")
                 _blit(rgb, self._label(_lb, lab_px, color=_cl),
                       mx, _cyy + _nt.shape[0] - int(lab_px * 0.1), "tl")
