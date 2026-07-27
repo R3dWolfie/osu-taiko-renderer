@@ -804,7 +804,7 @@ class TaikoSim:
         vis = max(0.25, self._mascot_foot - self._mascot_head)
         mh = (g.pf_h * 1.05) / vis                      # visible body ~1.05x lane height
         mw = mh * self._mascot_aspect
-        feet_y = pf_top + g.pf_h * 0.30                 # feet DOWN on the drum (stands on it)
+        feet_y = pf_top + g.pf_h * 0.16                 # feet on the drum top (hair clears the drum)
         cy = feet_y - (self._mascot_foot - 0.5) * mh    # place by real feet position
         cx = g.drum_x + g.drum_d * 0.45                 # over the input drum
         return [Sprite(cx, cy, mw, mh, f"pippidon_{state}_{frame}", (1, 1, 1, 1))]
