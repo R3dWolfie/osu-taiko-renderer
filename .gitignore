@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS
+*~
+*.swp
+*.orig
+
+# Ad-hoc backups (use git history instead)
+*.bak
+*.bak_*
+*_backup-*/
+*_backup_*/
+_smoke_*.py
