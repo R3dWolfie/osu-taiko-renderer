@@ -123,6 +123,7 @@ class ArgonHud:
         self.first = first
         self.last = max(last, first + 1)
         self.sim = sim
+        self.cfg = cfg
         self.counter = ArgonCounter()
         self.bold = get_font("Bold")
         self.semi = get_font("SemiBold")
@@ -174,23 +175,14 @@ class ArgonHud:
         # score block below it. No skin scorebar -> no bar (unchanged Argon).
         hp_h = self._hpbar.draw(rgb, w, h, scene.hp, _blit) if self._hpbar.present else 0
 
-        # --- score (top-left): angular wedge bracket + segmented number ---
-        if self.wedge is not None:
-            if self._wedge_scaled is None:
-                ww = int(w * 0.30)
-                wh = int(ww * self.wedge.shape[0] / self.wedge.shape[1])
-                self._wedge_scaled = np.array(
-                    Image.fromarray(self.wedge).resize((ww, wh), Image.LANCZOS))
-            _blit(rgb, self._wedge_scaled, 0, int(my * 0.2) + hp_h, "tl")
-        sc = self._num(self._sfont, str(int(scene.score)), h * 0.052)
-        _blit(rgb, self._label("SCORE", lab_px), mx, my + hp_h, "tl")
-        _blit(rgb, sc, mx, my + hp_h + int(lab_px * 1.3), "tl")
+        # --- score (top-RIGHT, lazer default taiko layout) ---
+        sc = self._num(self._sfont, str(int(scene.score)), h * 0.056)
+        _blit(rgb, sc, w - mx, my, "tr")
 
-        # --- accuracy (top-right): whole big + fraction half + % ---
+        # --- accuracy (top-right, directly below the score) ---
         pct = max(0.0, min(100.0, scene.accuracy * 100.0))
         ah = h * 0.05
-        _blit(rgb, self._label("ACCURACY", lab_px), w - mx, my, "tr")
-        ay = my + int(lab_px * 1.3)
+        ay = my + sc.shape[0] + int(h * 0.010)
         if self._sfont.present:
             _blit(rgb, self._sfont.render(f"{pct:.2f}%", ah * 0.62),
                   w - mx, ay, "tr")
@@ -227,6 +219,20 @@ class ArgonHud:
                 rgb[my2:my2 + ph, x0:px] = (44, 50, 60)
                 _blit(rgb, tex, x0 + pad, my2 + pad // 2, "tl")
                 px = x0 - int(w * 0.006)
+
+        # --- hit counter (mid-left): GREAT / OK / MISS, per --hit-counter ---
+        if getattr(self.cfg, "show_hit_counter", True) and getattr(scene, "counts", None) is not None:
+            _g, _o, _m = scene.counts
+            _cnp = h * 0.055
+            _cyy = int(h * 0.46)
+            for _v, _lb, _cl in ((_g, "GREAT", (95, 200, 255)),
+                                 (_o, "OK", (150, 235, 90)),
+                                 (_m, "MISS", (255, 95, 95))):
+                _nt = self.bold.render(str(int(_v)), _cnp, color=_cl)
+                _blit(rgb, _nt, mx, _cyy, "tl")
+                _blit(rgb, self._label(_lb, lab_px, color=_cl),
+                      mx, _cyy + _nt.shape[0] - int(lab_px * 0.1), "tl")
+                _cyy += _nt.shape[0] + int(lab_px * 1.7)
 
         # --- combo (bottom-left) ---
         ctex = self._num(self._cfont, f"{int(scene.combo)}x", h * 0.072)

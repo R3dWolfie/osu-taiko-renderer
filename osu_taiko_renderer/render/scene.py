@@ -802,9 +802,9 @@ class TaikoSim:
         frame = int(t * 0.06) % counts[state]          # AnimationFramerate 60
         pf_top = g.center_y - g.pf_h / 2.0
         vis = max(0.25, self._mascot_foot - self._mascot_head)
-        mh = (g.pf_h * 1.25) / vis                      # visible body ~1.25x lane height (lazer-ish)
+        mh = (g.pf_h * 0.92) / vis                      # visible body ~0.92x lane height
         mw = mh * self._mascot_aspect
-        feet_y = pf_top + g.pf_h * 0.42                 # feet into the lane so legs sit BEHIND the bar
+        feet_y = pf_top + g.pf_h * 0.06                 # feet AT the drum/lane top
         cy = feet_y - (self._mascot_foot - 0.5) * mh    # place by real feet position
         cx = g.drum_x + g.drum_d * 0.45                 # over the input drum
         return [Sprite(cx, cy, mw, mh, f"pippidon_{state}_{frame}", (1, 1, 1, 1))]
@@ -827,8 +827,6 @@ class TaikoSim:
             v = max(0.0, 1.0 - self._dim_env.level(t))
             sp.append(Sprite(w / 2, h / 2, w, h, "bg", (v, v, v, 1.0)))
         strip_h = g.pf_h * 1.18
-        if self.sk_mascot:
-            sp.extend(self._mascot_sprites(t))
         if self.sk_lane:
             # legacy lane background (taiko-bar-right), stretched across the
             # playfield height; the drum draws on top of its left portion.
@@ -871,6 +869,11 @@ class TaikoSim:
         else:
             sp.append(Sprite(g.drum_x, cy, g.drum_d, g.drum_d, "argon_drum_idle",
                              (1, 1, 1, 1)))
+
+        # mascot (pippidon): IN FRONT of the drum (feet visible on it) but BEHIND
+        # the notes/objects — lazer DrawableTaikoMascot layer.
+        if self.sk_mascot:
+            sp.extend(self._mascot_sprites(t))
 
         # --- hit target: Argon double circle + white bars. A skin lane
         # (taiko-bar-right / taiko-bar-left) carries its own target mark, so
