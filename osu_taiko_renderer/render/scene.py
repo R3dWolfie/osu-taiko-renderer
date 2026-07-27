@@ -165,6 +165,26 @@ class TaikoSim:
         self.sk_barline = self.skin.has("taiko-barline")
         self.sk_roll = self.skin.has("taiko-roll-middle")
         self.sk_lane = self.skin.has("taiko-bar-right")
+        # mascot (pippidon): count frames per state; aspect for sizing
+        self.mascot_counts = {}
+        for _st in ("idle", "kiai", "clear", "fail"):
+            _n = 0
+            while self.skin.has(f"pippidon{_st}{_n}"):
+                _n += 1
+            if _n:
+                self.mascot_counts[_st] = _n
+        self.sk_mascot = bool(self.mascot_counts)
+        self._mascot_aspect = 1.0
+        self._mascot_head, self._mascot_foot = 0.0, 1.0     # visible-body y fractions
+        if self.sk_mascot:
+            _s0 = "idle" if "idle" in self.mascot_counts else next(iter(self.mascot_counts))
+            _im = self.skin.load(f"pippidon{_s0}0")
+            if _im is not None and _im.shape[0]:
+                self._mascot_aspect = _im.shape[1] / _im.shape[0]
+                _rows = (_im[..., 3] > 8).any(axis=1).nonzero()[0]
+                if len(_rows):
+                    self._mascot_head = _rows[0] / _im.shape[0]
+                    self._mascot_foot = (_rows[-1] + 1) / _im.shape[0]
 
         def _aspect(name, default):
             img = self.skin.load(name)
@@ -763,6 +783,32 @@ class TaikoSim:
         f = 1.0 - age / AC.DRUM_PRESS_UP_MS
         return AC.DRUM_PRESS_ALPHA * (f ** 5)        # OutQuint-ish
 
+    def _mascot_sprites(self, t):
+        """pippidon mascot at the playfield left, animating by state (kiai during
+        kiai, fail on low HP, else idle) at the skin's 60fps. Drawn behind the
+        notes; feet near the lane top, facing right."""
+        g = self.geo
+        counts = self.mascot_counts
+        hp = self._state_at(t)[6]
+        in_kiai = bool(self.kiai) and any(s <= t < e for s, e in self.kiai)
+        if in_kiai and "kiai" in counts:
+            state = "kiai"
+        elif hp < 0.5 and "fail" in counts:
+            state = "fail"
+        elif "idle" in counts:
+            state = "idle"
+        else:
+            state = next(iter(counts))
+        frame = int(t * 0.06) % counts[state]          # AnimationFramerate 60
+        pf_top = g.center_y - g.pf_h / 2.0
+        vis = max(0.25, self._mascot_foot - self._mascot_head)
+        mh = (g.pf_h * 0.86) / vis                      # visible body ~0.86x lane height
+        mw = mh * self._mascot_aspect
+        feet_y = pf_top + g.pf_h * 0.13                 # feet just into the lane top
+        cy = feet_y - (self._mascot_foot - 0.5) * mh    # place by real feet position
+        cx = g.drum_x + g.drum_d * 0.45                 # over the input drum
+        return [Sprite(cx, cy, mw, mh, f"pippidon_{state}_{frame}", (1, 1, 1, 1))]
+
     def build_scene(self, t: int) -> SceneState:
         g = self.geo
         s = SceneState(time_ms=t)
@@ -781,6 +827,8 @@ class TaikoSim:
             v = max(0.0, 1.0 - self._dim_env.level(t))
             sp.append(Sprite(w / 2, h / 2, w, h, "bg", (v, v, v, 1.0)))
         strip_h = g.pf_h * 1.18
+        if self.sk_mascot:
+            sp.extend(self._mascot_sprites(t))
         if self.sk_lane:
             # legacy lane background (taiko-bar-right), stretched across the
             # playfield height; the drum draws on top of its left portion.
@@ -824,17 +872,20 @@ class TaikoSim:
             sp.append(Sprite(g.drum_x, cy, g.drum_d, g.drum_d, "argon_drum_idle",
                              (1, 1, 1, 1)))
 
-        # --- hit target: faint double circle + upper/lower white bars ---
-        sp.append(Sprite(g.target_x, cy, g.note_d, g.note_d,
-                         "argon_hit_target", (1, 1, 1, 1)))
-        bar_w = max(2.0, AC.HIT_TARGET_BORDER * g.scale)
-        bar_h = (1.0 - AC.DEFAULT_STRONG_SIZE) * g.pf_h
-        top_y = cy - g.pf_h / 2.0
-        bot_y = cy + g.pf_h / 2.0
-        sp.append(Sprite(g.target_x, top_y + bar_h / 2.0, bar_w, bar_h, None,
-                         (1, 1, 1, 1)))
-        sp.append(Sprite(g.target_x, bot_y - bar_h / 2.0, bar_w, bar_h, None,
-                         (1, 1, 1, 1)))
+        # --- hit target: Argon double circle + white bars. A skin lane
+        # (taiko-bar-right / taiko-bar-left) carries its own target mark, so
+        # skip the Argon overlay when the skin provides the lane. ---
+        if not self.sk_lane:
+            sp.append(Sprite(g.target_x, cy, g.note_d, g.note_d,
+                             "argon_hit_target", (1, 1, 1, 1)))
+            bar_w = max(2.0, AC.HIT_TARGET_BORDER * g.scale)
+            bar_h = (1.0 - AC.DEFAULT_STRONG_SIZE) * g.pf_h
+            top_y = cy - g.pf_h / 2.0
+            bot_y = cy + g.pf_h / 2.0
+            sp.append(Sprite(g.target_x, top_y + bar_h / 2.0, bar_w, bar_h, None,
+                             (1, 1, 1, 1)))
+            sp.append(Sprite(g.target_x, bot_y - bar_h / 2.0, bar_w, bar_h, None,
+                             (1, 1, 1, 1)))
         # kiai glow at the hit target (TaikoPlayfield KiaiGlow), pulsing
         if kp > 0.001:
             gd = g.pf_h * 1.3

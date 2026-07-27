@@ -258,6 +258,16 @@ def build_textures(skin_dir=None) -> dict[str, np.ndarray]:
     else:
         tex["argon_don_big"] = tex["argon_don"]
         tex["argon_kat_big"] = tex["argon_kat"]
+    # --- mascot (pippidon): idle/kiai/clear/fail animation frames ->
+    # pippidon_<state>_<i> texture keys (drawn behind the notes in scene.py) ---
+    for _st in ("idle", "kiai", "clear", "fail"):
+        _i = 0
+        while True:
+            _fr = skin.load(f"pippidon{_st}{_i}")
+            if _fr is None:
+                break
+            tex[f"pippidon_{_st}_{_i}"] = _fr
+            _i += 1
     # --- the rest of the legacy taiko playfield (drum, hit target, judgements,
     # bar line, drumroll) — loaded raw; the scene/compositor use them when the
     # skin provides them, else fall back to Argon. ---
