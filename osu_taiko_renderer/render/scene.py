@@ -979,7 +979,7 @@ class TaikoSim:
                 sp.append(Sprite(nx, ny, dd, dd, key, (1, 1, 1, a)))
                 continue
             x, p = self._x_at(o.time_ms, o.scroll_vel, t)
-            if p < -0.15 or p > 1.1:
+            if p > 1.1:
                 continue
             # osu!taiko Hidden (TaikoModHidden): a note starts fading the
             # moment it spawns and is fully invisible after 37.5% of its
@@ -993,6 +993,13 @@ class TaikoSim:
                     continue          # fully hidden — skip
                 if na > 1.0:
                     na = 1.0
+            if res == MISS and t >= rt:
+                _ma = t - rt
+                if _ma > 100:
+                    continue          # lazer FadeOut(100) done -> despawned
+                na *= max(0.0, 1.0 - _ma / 100.0)
+            elif p < -0.15:
+                continue              # non-miss unhit backstop
             sp.append(Sprite(x, cy, d, d, key, (1, 1, 1, na)))
             if kp > 0.001:        # kiai beat flash on the note (additive white)
                 sp.append(Sprite(x, cy, d, d, "argon_note_flash", (1, 1, 1, kp * na)))
