@@ -144,6 +144,8 @@ class ArgonHud:
         self._cfont = SkinDigitFont(_sk, getattr(_sk, "combo_prefix", "combo"),
                                     "-x", (getattr(_sk, "combo_overlap", 0) or 0) / 100.0)
         self._hpbar = SkinHealthBar(_sk)
+        from osu_taiko_renderer.hud.hud_layout import SkinHudLayout
+        self.layout = SkinHudLayout(getattr(cfg, "skin_dir", None))
 
     def _label(self, text, px, color=_LABEL):
         return self.bold.render(text, px, color=color)
@@ -185,23 +187,30 @@ class ArgonHud:
         # score block below it. No skin scorebar -> no bar (unchanged Argon).
         hp_h = self._hpbar.draw(rgb, w, h, scene.hp, _blit) if self._hpbar.present else 0
 
-        # --- score (top-RIGHT, lazer default taiko layout) ---
+        # --- score: skin-positioned (MainHUDComponents.json) or top-RIGHT ---
         sc = self._num(self._sfont, str(int(scene.score)), h * 0.056)
-        _blit(rgb, sc, w - mx, my, "tr")
+        _sp = self.layout.place("score", sc.shape[1], sc.shape[0], w, h, mx, my)
+        if _sp is not None:
+            _sx, _sy = _sp
+            _blit(rgb, sc, _sx, _sy, "tl")
+            s_right, s_top = _sx + sc.shape[1], _sy
+        else:
+            _blit(rgb, sc, w - mx, my, "tr")
+            s_right, s_top = w - mx, my
 
-        # --- accuracy (top-right, directly below the score) ---
+        # --- accuracy (directly below the score block) ---
         pct = max(0.0, min(100.0, scene.accuracy * 100.0))
         ah = h * 0.05
-        ay = my + sc.shape[0] + int(h * 0.010)
+        ay = s_top + sc.shape[0] + int(h * 0.010)
         if self._sfont.present:
             _blit(rgb, self._sfont.render(f"{pct:.2f}%", ah * 0.62),
-                  w - mx, ay, "tr")
+                  s_right, ay, "tr")
         else:
             whole = str(int(pct))
             frac = f"{pct:06.2f}".split(".")[1]
             pcttex = self.counter.render("%", ah * 0.5)
-            _blit(rgb, pcttex, w - mx, ay, "tr")
-            fx = w - mx - pcttex.shape[1]
+            _blit(rgb, pcttex, s_right, ay, "tr")
+            fx = s_right - pcttex.shape[1]
             fractex = self.counter.render(frac, ah * 0.5)
             _blit(rgb, fractex, fx, ay, "tr")
             dottex = self.counter.render(".", ah * 0.5)
@@ -209,17 +218,17 @@ class ArgonHud:
             wholetex = self.counter.render(whole, ah)
             _blit(rgb, wholetex, fx - fractex.shape[1] - dottex.shape[1], ay, "tr")
 
-        # --- pp (top-right, below accuracy) ---
+        # --- pp (below accuracy) ---
         ppy = ay + int(ah) + int(lab_px * 0.6)
-        _blit(rgb, self._label("PP", lab_px), w - mx, ppy, "tr")
+        _blit(rgb, self._label("PP", lab_px), s_right, ppy, "tr")
         pptex = self.counter.render(str(int(round(scene.pp))), h * 0.03)
-        _blit(rgb, pptex, w - mx, ppy + int(lab_px * 1.2), "tr")
+        _blit(rgb, pptex, s_right, ppy + int(lab_px * 1.2), "tr")
 
-        # --- mods (top-right, below PP): coloured acronym pills ---
+        # --- mods (below PP): coloured acronym pills ---
         mods = mod_acronyms(int(getattr(self.meta, "mods", 0) or 0))
         if mods:
             my2 = ppy + int(lab_px * 1.2) + int(h * 0.03) + int(h * 0.012)
-            px = w - mx
+            px = s_right
             pill_px = max(12, int(h * 0.02))
             for ac in reversed(mods):
                 tex = self.bold.render(ac, pill_px, color=_WHITE)
@@ -234,7 +243,12 @@ class ArgonHud:
         if getattr(self.cfg, "show_hit_counter", True) and getattr(scene, "counts", None) is not None:
             _g, _o, _m = scene.counts
             _cnp = h * 0.055
-            _cyy = int(self.sim.geo.center_y + self.sim.geo.pf_h / 2.0) + int(h * 0.045)
+            _clp = self.layout.place("counter", int(w * 0.10), int(h * 0.22), w, h, mx, my)
+            if _clp is not None:
+                _cx, _cyy = int(_clp[0]), int(_clp[1])
+            else:
+                _cx = mx
+                _cyy = int(self.sim.geo.center_y + self.sim.geo.pf_h / 2.0) + int(h * 0.045)
             for _v, _lb, _cl in ((_g, "GREAT", (95, 200, 255)),
                                  (_o, "OK", (150, 235, 90)),
                                  (_m, "MISS", (255, 95, 95))):
@@ -242,16 +256,23 @@ class ArgonHud:
                     _nt = self._tint_lum(self._sfont.render(str(int(_v)), _cnp), _cl)
                 else:
                     _nt = self.bold.render(str(int(_v)), _cnp, color=_cl)
-                _blit(rgb, _nt, mx, _cyy, "tl")
+                _blit(rgb, _nt, _cx, _cyy, "tl")
                 _blit(rgb, self._label(_lb, lab_px, color=_cl),
-                      mx, _cyy + _nt.shape[0] - int(lab_px * 0.1), "tl")
+                      _cx, _cyy + _nt.shape[0] - int(lab_px * 0.1), "tl")
                 _cyy += _nt.shape[0] + int(lab_px * 1.7)
 
-        # --- combo (bottom-left) ---
+        # --- combo: skin-positioned or bottom-left ---
         ctex = self._num(self._cfont, f"{int(scene.combo)}x", h * 0.072)
-        _blit(rgb, ctex, mx, h - my, "bl")
-        _blit(rgb, self._label("COMBO", lab_px, color=_ACCENT),
-              mx, h - my - ctex.shape[0] - int(lab_px * 0.4), "bl")
+        _bp = self.layout.place("combo", ctex.shape[1], ctex.shape[0], w, h, mx, my)
+        if _bp is not None:
+            _bx, _by = int(_bp[0]), int(_bp[1])
+            _blit(rgb, ctex, _bx, _by, "tl")
+            _blit(rgb, self._label("COMBO", lab_px, color=_ACCENT),
+                  _bx, _by - int(lab_px * 1.2), "tl")
+        else:
+            _blit(rgb, ctex, mx, h - my, "bl")
+            _blit(rgb, self._label("COMBO", lab_px, color=_ACCENT),
+                  mx, h - my - ctex.shape[0] - int(lab_px * 0.4), "bl")
 
         # --- key counter B1–B4 (bottom-right): activity bar / label / count,
         # each column centred (ArgonKeyCounter layout) ---
