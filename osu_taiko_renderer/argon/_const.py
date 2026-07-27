@@ -67,7 +67,7 @@ DRUM_GLOW_STRENGTH = 1.0                   # additive strength of the outer halo
 DRUM_GLOW_RADIUS = 50                      # EdgeEffect glow radius (local px @200H)
 DRUM_PRESS_ALPHA = 0.5                     # +0.5 on press
 DRUM_PRESS_DOWN_MS = 40
-DRUM_PRESS_UP_MS = 750
+DRUM_PRESS_UP_MS = 200
 
 # --- hit target (ArgonHitTarget) ---------------------------------------------
 HIT_TARGET_BORDER = 4.0                    # bar thickness (local px)

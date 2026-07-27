@@ -729,7 +729,7 @@ class TaikoSim:
 
     def _drum_flash(self, zone: str, t: int) -> float:
         """Input-drum quadrant flash intensity (ArgonInputDrum): on press alpha
-        jumps to ~0.5 then fades out over 750ms with an OutQuint curve."""
+        jumps to ~0.5 then fades out over 200ms with an OutQuint curve."""
         times = self._zpress[zone]
         i = bisect.bisect_right(times, t) - 1
         if i < 0:
