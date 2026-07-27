@@ -83,6 +83,26 @@ class _SampleCache:
 
     def __init__(self) -> None:
         self._cache: dict[str, np.ndarray | None] = {}
+        self._dir_index: dict[str, dict] = {}
+
+    def _index(self, d: Path) -> dict:
+        di = self._dir_index.get(str(d))
+        if di is None:
+            di = {}
+            try:
+                for p in Path(d).iterdir():
+                    if p.is_file():
+                        di.setdefault(p.name.lower(), p)
+            except OSError:
+                pass
+            self._dir_index[str(d)] = di
+        return di
+
+    def find_in(self, d: Path, name: str) -> np.ndarray | None:
+        # osu! skins are case-INSENSITIVE; the host FS is not. Match by lowered
+        # filename so e.g. normal-hitNormal.wav resolves.
+        p = self._index(d).get(name.lower())
+        return self.get(p) if p is not None else None
 
     def get(self, path: Path) -> np.ndarray | None:
         key = str(path)
@@ -94,18 +114,20 @@ class _SampleCache:
 
 
 def _candidate_names(set_name: str, type_name: str, index: int) -> list[str]:
+    # osu!taiko checks the taiko-prefixed sample first, then the generic one.
     out = []
-    if index > 1:
-        out += [f"{set_name}-hit{type_name}{index}.wav",
-                f"{set_name}-hit{type_name}{index}.ogg"]
-    out += [f"{set_name}-hit{type_name}.wav", f"{set_name}-hit{type_name}.ogg"]
+    for prefix in ("taiko-", ""):
+        base = f"{prefix}{set_name}-hit{type_name}"
+        if index > 1:
+            out += [f"{base}{index}.wav", f"{base}{index}.ogg"]
+        out += [f"{base}.wav", f"{base}.ogg"]
     return out
 
 
 def _find(dirs, cache, names) -> np.ndarray | None:
     for d in dirs:
         for n in names:
-            arr = cache.get(d / n)
+            arr = cache.find_in(d, n)
             if arr is not None:
                 return arr
     return None
