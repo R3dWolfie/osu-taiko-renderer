@@ -134,6 +134,9 @@ class RenderConfig:
     encoder_device: str | None = None
     skin_dir: Path | None = None
     default_skin_dir: Path | None = None
+    # Beatmap hitsounds (lazer BeatmapHitsounds, default on): off drops the
+    # beatmap dir from the sample stack so skin/default samples play.
+    beatmap_hitsounds: bool = True
     # timing / outro
     lead_in_ms: int = 1500
     tail_ms: int = 1500

@@ -253,7 +253,8 @@ def render_core(
             _bdir = osu_path.parent if osu_path is not None else None
             hitsound = build_taiko_hitsound_track(
                 notes=sim.notes, note_hit=sim.note_hit, beatmap=bm,
-                sample_dirs=[_bdir, cfg.skin_dir, cfg.default_skin_dir],
+                sample_dirs=(([_bdir] if cfg.beatmap_hitsounds else [])
+                             + [cfg.skin_dir, cfg.default_skin_dir]),
                 output_wav=output_path.with_suffix(".hits.wav"),
                 video_ms=total_dur_s * 1000.0, start_ms=start_ms, rate=rate)
         except Exception as _e:  # noqa: BLE001 — hitsounds never break a render
