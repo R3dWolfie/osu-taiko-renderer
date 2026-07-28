@@ -961,11 +961,7 @@ class TaikoSim:
                 # note-sized, so the swell never read as a swell. Base on the
                 # note size (→ full ring ≈ 5×note ≈ 2.4× lane height: dramatic
                 # but stays on-screen; 5×big_d overflowed into the HUD).
-                # Cap the swell ring so its 5x expansion fills the lane
-                # WITHOUT overflowing into the HUD. g.note_d gave ~2.4x lane
-                # height: the ring spilled over the score/combo and the note
-                # stream strobed across it (read as a flickering mess).
-                base_ring = min(g.note_d, g.pf_h * 0.23)
+                base_ring = g.note_d
                 dur = max(1.0, end_ms - o.time_ms)
 
                 # clear/disappear (lazer: bodyContainer FadeOut 300ms OutQuad +
