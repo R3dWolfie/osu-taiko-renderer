@@ -924,7 +924,7 @@ class TaikoSim:
             if o.kind is TaikoType.DRUMROLL:
                 x0, p0 = self._x_at(o.time_ms, o.scroll_vel, t)
                 xe, pe = self._x_at(end_ms, o.scroll_vel, t)
-                if pe > 1.1 or p0 < -0.2:
+                if p0 > 1.1 or pe < -0.2:
                     continue
                 head, tail = min(x0, xe), max(x0, xe)   # head = leading (left) end
                 length = max(d, tail - head)
