@@ -15,6 +15,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
+import pathlib
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -602,6 +603,23 @@ def _find_osu(beatmap_dir: Path, md5: str) -> Path:
         for p in osus:
             if hashlib.md5(p.read_bytes()).hexdigest() == md5:
                 return p
+    # DMCA/mirror-down recovery: the bot's manual-.osz upload path writes a
+    # ".r3d_forced_osu" marker naming the difficulty it matched when the
+    # replay's exact md5 is not in the archive (a pack shipping a different
+    # version, or an unsubmitted map). Honour it before the mode/first
+    # fallback so we render THAT diff -- and resolve ITS audio/bg -- instead
+    # of the first same-mode one (which desyncs or renders silently).
+    _forced_marker = beatmap_dir / ".r3d_forced_osu"
+    if _forced_marker.is_file():
+        try:
+            _forced = beatmap_dir / pathlib.Path(
+                _forced_marker.read_text(encoding="utf-8").strip()
+            ).name
+        except OSError:
+            _forced = None
+        if _forced is not None and _forced.is_file() \
+                and _forced.suffix.lower() == ".osu":
+            return _forced
     # fall back to a Mode:1 (taiko) beatmap, else the first
     for p in osus:
         head = p.read_text(encoding="utf-8", errors="replace")[:4000]
