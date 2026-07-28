@@ -137,6 +137,8 @@ class RenderConfig:
     # Beatmap hitsounds (lazer BeatmapHitsounds, default on): off drops the
     # beatmap dir from the sample stack so skin/default samples play.
     beatmap_hitsounds: bool = True
+    # Miss / combo-break hitsound (default on): off silences combobreak.wav.
+    miss_hitsound: bool = True
     # timing / outro
     lead_in_ms: int = 1500
     tail_ms: int = 1500

@@ -189,6 +189,7 @@ def _mix(track: np.ndarray, arr: np.ndarray, at_ms: float, gain: float):
 def build_taiko_hitsound_track(
     *, notes, note_hit, beatmap, sample_dirs, output_wav: Path,
     video_ms: float, start_ms: int, rate: float,
+    miss_hitsound: bool = True,
 ) -> Path | None:
     """Build the stereo hitsound WAV at `output_wav`, aligned to the final video
     (a note at map time T lands at video time (T - start_ms)/rate). Returns the
@@ -201,7 +202,7 @@ def build_taiko_hitsound_track(
     total = max(1, int(video_ms / 1000.0 * SAMPLE_RATE))
     track = np.zeros((total, CHANNELS), dtype=np.float32)
 
-    cb = _find(dirs, cache, ["combobreak.wav", "combobreak.ogg"])
+    cb = _find(dirs, cache, ["combobreak.wav", "combobreak.ogg"]) if miss_hitsound else None
     placed = combo = 0
     for o in sorted(notes, key=lambda o: o.time_ms):
         rt, res = note_hit.get(id(o), (0, MISS))

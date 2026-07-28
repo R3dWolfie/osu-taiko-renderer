@@ -256,7 +256,8 @@ def render_core(
                 sample_dirs=(([_bdir] if cfg.beatmap_hitsounds else [])
                              + [cfg.skin_dir, cfg.default_skin_dir]),
                 output_wav=output_path.with_suffix(".hits.wav"),
-                video_ms=total_dur_s * 1000.0, start_ms=start_ms, rate=rate)
+                video_ms=total_dur_s * 1000.0, start_ms=start_ms, rate=rate,
+                miss_hitsound=cfg.miss_hitsound)
         except Exception as _e:  # noqa: BLE001 — hitsounds never break a render
             print(f"[taiko-renderer] hitsound build skipped: {_e}", file=sys.stderr)
             hitsound = None

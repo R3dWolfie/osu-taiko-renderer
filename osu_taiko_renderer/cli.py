@@ -38,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--hit-counter", action=BA, default=True)
     ap.add_argument("--beatmap-hitsounds", action=BA, default=True,
                     help="use the beatmap's custom hitsounds (off = skin/default only)")
+    ap.add_argument("--miss-hitsound", action=BA, default=True,
+                    help="play the combobreak (miss) hitsound")
     ap.add_argument("--scroll-time", type=int, default=1600,
                     help="ms a 1.0x-SV note is visible (lower = faster scroll)")
     ap.add_argument("--watermark", default="")
@@ -86,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         skin_dir=args.skin,
         default_skin_dir=args.default_skin,
         beatmap_hitsounds=args.beatmap_hitsounds,
+        miss_hitsound=args.miss_hitsound,
         skip_intro=args.skip_intro,
         show_results=args.results,
         letterbox_breaks=args.letterbox_breaks,
