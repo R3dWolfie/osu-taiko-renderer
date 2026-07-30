@@ -817,9 +817,11 @@ class TaikoSim:
         # across many video frames, so the motion is identical at 30fps and 60fps
         # (the old `t*AnimationFramerate` sampled a 60fps sheet at frame time ->
         # aliased to a near-static idle at 30fps and a hyperactive one at 60fps).
-        # / self._rate keeps a constant wall-clock bop under DT/NC/HT (the same
-        # map-time->real-time correction used for UR and the hit-error bar; at
-        # no-mod rate 1.0 this is byte-for-byte lazer's beat index).
+        # NO / self._rate here: lazer beat-syncs the mascot to the (sped-up)
+        # track, so under DT/NC it must bop ~1.5x faster in wall-clock to match
+        # the atempo'd audio. map-time t is already compressed by rate in the
+        # video, so the beat index speeds up on its own. At no-mod this is
+        # byte-for-byte lazer's beat index (Red 2026-07-30: DT fidelity).
         bl = self.timing.beat_length(t) if self.timing is not None else 0.0
         if bl and bl > 0.0:
             ptime = 0.0
@@ -828,9 +830,9 @@ class TaikoSim:
                     ptime = pt
                 else:
                     break
-            beat_index = int(((t - ptime) / self._rate) / bl)
+            beat_index = int((t - ptime) / bl)
         else:
-            beat_index = int((t / self._rate) / 500.0)   # no timing: gentle 120BPM bop
+            beat_index = int(t / 500.0)   # no timing: 120BPM bop (sped up by rate)
         n = counts[state]
         if state == "clear":
             # lazer's ClearMascotTextureAnimation plays once (Loop=false) and
