@@ -27,6 +27,9 @@ class TaikoSkin:
         self.combo_prefix = "combo"
         self.score_overlap = 0
         self.combo_overlap = 0
+        # [General] AnimationFramerate: FPS for skin animations (e.g. the
+        # pippidon mascot). Default 60 (osu! legacy default) when unset/<=0.
+        self.animation_framerate = 60.0
         self._parse_ini()
 
     def _parse_ini(self) -> None:
@@ -43,10 +46,21 @@ class TaikoSkin:
             if line.startswith("[") and line.endswith("]"):
                 section = line[1:-1].strip().lower()
                 continue
-            if section != "fonts" or ":" not in line:
+            if ":" not in line:
                 continue
             k, _, v = line.partition(":")
             k, v = k.strip().lower(), v.strip()
+            if section == "general":
+                if k == "animationframerate":
+                    try:
+                        _fr = float(v)
+                    except ValueError:
+                        _fr = 0.0
+                    if _fr > 0:
+                        self.animation_framerate = _fr
+                continue
+            if section != "fonts":
+                continue
             if k == "scoreprefix" and v:
                 self.score_prefix = v
             elif k == "comboprefix" and v:

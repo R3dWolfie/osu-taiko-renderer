@@ -808,7 +808,12 @@ class TaikoSim:
             state = "idle"
         else:
             state = next(iter(counts))
-        frame = int(t * 0.06) % counts[state]          # AnimationFramerate 60
+        # Mascot animates at the skin's AnimationFramerate in REAL time: divide
+        # map-time by the play rate so DT/NC (rate 1.5) don't spin it 1.5x too
+        # fast (same map-time->real-time bug class as the UR/hit-error bar).
+        # Skins without an AnimationFramerate default to 60 (no-mod unchanged).
+        _fps = getattr(self.skin, "animation_framerate", 60.0) or 60.0
+        frame = int(t / self._rate * _fps / 1000.0) % counts[state]
         pf_top = g.center_y - g.pf_h / 2.0
         vis = max(0.25, self._mascot_foot - self._mascot_head)
         mh = (g.pf_h * 1.05) / vis                      # visible body ~1.05x lane height
