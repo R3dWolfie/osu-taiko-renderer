@@ -33,7 +33,7 @@ GREAT, OK, MISS = "great", "ok", "miss"
 # Always render the judge’s HONEST judgments instead of fabricating misses to
 # match the .osr header miss total / max_combo (Red 2026-07-27, #25). Flip to
 # False to restore the header-count reconcile. Score still anchors to the .osr.
-_TAIKO_ALWAYS_HONEST = True
+_TAIKO_ALWAYS_HONEST = False   # Red 2026-07-30: match the .osr 1:1 (counts/acc/combo = header, = results). Reverts the 2026-07-27 honest-judgments call; reconcile may show a hit note as the miss to make the header count.
 
 # osu!lazer ScoreV3 total-score mod multipliers — ppy/osu#37967 (mode-agnostic;
 # identical table to the std/catch/mania engines). Rate mods (DT/HT) at the
