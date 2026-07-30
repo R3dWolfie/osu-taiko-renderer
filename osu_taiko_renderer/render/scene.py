@@ -664,26 +664,24 @@ class TaikoSim:
             cprog = combo_portion / max_combo_portion if max_combo_portion else 1.0
             aprog = judged / n if n else 1.0
             raw.append(500000.0 * acc * cprog + 500000.0 * (acc ** 5) * aprog)
-        # ScoreV3 × mod multiplier (ppy/osu#37967). Previously the standardised
-        # curve was scaled to the .osr's authoritative score, which carried
-        # osu's OLD mod multiplier and made taiko inconsistent with the other
-        # modes. Now the curve is scaled by the NEW mod multiplier — unified
-        # across engines. (Trade-off: drops the drumroll/swell tick bonus the
-        # .osr scaling used to absorb; same class of simplification std makes.)
-        _mm = mods_score_multiplier(int(getattr(self.meta, "mods", 0) or 0))
+        # Displayed score = the .osr's authoritative total, EXACTLY (Red
+        # 2026-07-30, #91). The standardised (ScoreV3) curve above only supplies
+        # the SHAPE of the climb; its endpoint is normalised to the replay's
+        # stored score so the gameplay HUD lands on the SAME number the results
+        # screen rolls to (lazer_results rolls to meta.score) and the render
+        # matches the .osr 1:1. (Reverts the ScoreV3×mod-multiplier scaling — it
+        # put a recomputed value on the HUD that disagreed with both the .osr and
+        # the results card, e.g. 697,801 shown for a 1,078,636 play. The
+        # mod-multiplier path survives only as a fallback for the rare replay with
+        # no stored score.)
         _m = self.meta
-        _tot = ((getattr(_m, "count_300", 0) or 0) + (getattr(_m, "count_100", 0) or 0)
-                + (getattr(_m, "count_miss", 0) or 0)) if _m is not None else 0
-        if raw and _m is not None and _tot != len(order) and getattr(_m, "score", 0) and raw[-1] > 0:
-            # Judgment reconciliation FELL BACK: replay hit-count (_tot) != sim
-            # note count (an off-by-one in note parsing, ~2.5% of plays). The
-            # per-note judging is then UNRELIABLE, so raw*mult renders a wrong
-            # score (e.g. 351k for a 99.3% play). Anchor the curve to the
-            # replay's authoritative score instead (the pre-ScoreV3 behavior) so
-            # these plays are no worse than before the unification.
+        if raw and _m is not None and getattr(_m, "score", 0) and raw[-1] > 0:
             _k = _m.score / raw[-1]
             self._scorev2 = [int(round(r * _k)) for r in raw]
+            self._scorev2[-1] = int(_m.score)           # endpoint EXACT (no fp drift)
         elif raw:
+            # No authoritative .osr score: standardised curve × new mod mult.
+            _mm = mods_score_multiplier(int(getattr(self.meta, "mods", 0) or 0))
             self._scorev2 = [int(round(r * _mm)) for r in raw]
         else:
             self._scorev2 = [c[4] for c in self._cum]   # fallback: internal sum
