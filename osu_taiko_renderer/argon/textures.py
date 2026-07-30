@@ -332,16 +332,22 @@ def bake_drumroll_body(n=_N):
     return (np.clip(body, 0, 1) * 255).astype(np.uint8)
 
 
-def bake_explosion(grad, glow_color, n=_N):
-    """ArgonHitExplosion: tinted outer circle + white inner(0.85) with glow.
-    Returned as one additive texture (glow baked behind the white core)."""
+def bake_explosion(grad, glow_color, n=_N, inner_scale=0.35, inner_alpha=0.0):
+    """ArgonHitExplosion: an accent-coloured burst at the hit target — a filled
+    accent disc + accent glow (don red / kat blue), so a big don reads as a larger
+    SATURATED RED. The old inner white@0.85 covered the accent almost entirely, so
+    every big centre hit flashed a solid WHITE disc over the note; worse, the
+    additive explosions STACK on a dense stream and any white core washes the whole
+    burst to white. A pure accent disc instead saturates to clean red/blue when it
+    stacks (the red channel clips first), matching lazer's accent-tinted explosion.
+    inner_alpha>0 re-adds a soft white hot-centre if ever wanted."""
     r, _ = _radius(n)
     out = np.zeros((n, n, 4), np.float32)
     g = _glow(n, glow_color, C.EXPLOSION_GLOW_RADIUS / 200.0)
     out = g.astype(np.float32) / 255.0
     outer = (r <= 1.0).astype(np.float32)
     grd = _vgrad(n, grad[0], grad[1])
-    _over(out, grd[..., :3], outer * 0.9)
-    inner = (r <= C.EXPLOSION_INNER_SCALE).astype(np.float32)
-    _over(out, np.ones((n, n, 3), np.float32), inner)
+    _over(out, grd[..., :3], outer * 0.95)                # accent disc dominates
+    inner = (r <= inner_scale).astype(np.float32) * inner_alpha
+    _over(out, np.ones((n, n, 3), np.float32), inner)     # soft white hot-centre
     return (np.clip(out, 0, 1) * 255).astype(np.uint8)

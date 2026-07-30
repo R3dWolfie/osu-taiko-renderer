@@ -172,9 +172,16 @@ def _add_prescaled(rgb, pre, cx, cy, intensity):
 class ArgonEffects:
     def __init__(self, geo, skin_dir=None):
         self.geo = geo
+        # Hit explosion tinted by the NOTE accent (don=red / kat=blue), matching
+        # lazer's ArgonHitExplosion. The old CENTRE/RIM_HIT_GRAD are the pink/cyan
+        # INPUT-DRUM gradients; with bake_explosion's former solid white core they
+        # flashed a WHITE disc on every centre hit (a big don read as a big white
+        # circle), and being near-white they wash to solid white where the additive
+        # bursts overlap on a dense stream. Near-pure accent colours saturate to
+        # clean red / blue instead (the dominant channel clips first).
         self.exp = {
-            False: bake_explosion(C.CENTRE_HIT_GRAD, C.CENTRE_HIT_GLOW),  # centre/don
-            True: bake_explosion(C.RIM_HIT_GRAD, C.RIM_HIT_GLOW),         # rim/kat
+            False: bake_explosion((C.DON_TOP, C.DON_BOT), (255, 32, 32, 255)),  # centre/don
+            True: bake_explosion((C.KAT_TOP, C.KAT_BOT), (32, 156, 255, 255)),  # rim/kat
         }
         self._ring = bake_ring(64, 8)   # white judgement RingExplosion ring
         self.font = get_font("SemiBold")
