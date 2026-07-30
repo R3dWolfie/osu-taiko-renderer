@@ -260,6 +260,29 @@ class ArgonEffects:
                     spacing=C.JUDGE_SPACING * self.geo.scale)
         return self._jcache[key]
 
+    @staticmethod
+    def _legacy_explosion_anim(age):
+        """osu!lazer LegacyHitExplosion.Animate envelope (scale, alpha) at `age`
+        ms: FadeInFromZero(120) → FadeOut(180); ScaleTo 0.6 →(96ms)1.1 →(48ms)0.9
+        →(24ms)1.0, linear segments. The skin's taiko-hit300/100/0 sprite is the
+        legacy HIT EXPLOSION — it bursts AT the hit target, it does not float up
+        like Argon's judgement text."""
+        if age < 120.0:
+            alpha = age / 120.0
+        elif age < 300.0:
+            alpha = 1.0 - (age - 120.0) / 180.0
+        else:
+            alpha = 0.0
+        if age < 96.0:
+            scale = 0.6 + 0.5 * (age / 96.0)                 # 0.6 → 1.1
+        elif age < 144.0:
+            scale = 1.1 - 0.2 * ((age - 96.0) / 48.0)        # 1.1 → 0.9
+        elif age < 168.0:
+            scale = 0.9 + 0.1 * ((age - 144.0) / 24.0)       # 0.9 → 1.0
+        else:
+            scale = 1.0
+        return scale, max(0.0, alpha)
+
     _RING_SPEC = {"great": (4, 4, 1.0), "ok": (4, 0, 0.6)}   # (small,large,travel_x); miss none
 
     def _ring_burst(self, rgb, res, age, rt, g):
@@ -324,13 +347,28 @@ class ArgonEffects:
                 continue
             _add_prescaled(rgb, self._exp_scaled[(is_rim, big)],
                            g.target_x, g.center_y, a)
-        # judgement popups: float up (-0.6→-1.0 pf_h), scale 1→1.4, fade out
+        # judgement popups. Two distinct lazer behaviours:
+        #   * SKIN (legacy) → LegacyHitExplosion: the taiko-hit300/100/0 sprite
+        #     BURSTS at the hit target (centred on the drum), scale-punch + fade.
+        #     It does NOT float up (the old code reused the Argon text's upward
+        #     drift, so the ring hovered near the mascot's feet instead of on the
+        #     hit target — issue #117).
+        #   * ARGON → ArgonJudgementPiece: GREAT/OK text rises off the target and
+        #     fades, with the RingExplosion burst.
         for res, age, rt, big in judges:
             tex = self._judge_tex(res, big)
             if tex is None:                 # skin mode, no sprite for this result
                 continue
-            if not self._use_skin_judge:    # Argon RingExplosion only in Argon mode
-                self._ring_burst(rgb, res, age, rt, g)
+            h0, w0 = tex.shape[0], tex.shape[1]
+            if self._use_skin_judge:
+                scale, alpha = self._legacy_explosion_anim(age)
+                if alpha <= 0.01:
+                    continue
+                # straight alpha, centred ON the hit target (no upward float).
+                _blit_straight(rgb, tex, g.target_x, g.center_y,
+                               w0 * scale, h0 * scale, alpha)
+                continue
+            self._ring_burst(rgb, res, age, rt, g)   # Argon RingExplosion
             p = age / C.JUDGE_MOVE_MS
             ease = 1.0 - (1.0 - p) ** 5                # OutQuint (move/scale)
             scale = 1.0 + 0.4 * ease
@@ -338,9 +376,8 @@ class ArgonEffects:
             if alpha <= 0.01:
                 continue
             yoff = (0.6 + 0.4 * ease) * g.pf_h
-            h0, w0 = tex.shape[0], tex.shape[1]
-            # straight alpha for both skin images and Argon text (lazer draws the
-            # judgement as a normal SpriteText / Sprite — not additive).
+            # straight alpha (lazer draws the judgement as a normal SpriteText —
+            # not additive).
             _blit_straight(rgb, tex, g.target_x, g.center_y - yoff,
                            w0 * scale, h0 * scale, alpha)
         return rgb
