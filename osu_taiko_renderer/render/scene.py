@@ -922,14 +922,24 @@ class TaikoSim:
             last_hit = self._res_ordered[j] != MISS
         # CLEAR latch: from the most recent trigger <= t, play its frames once
         # (one per beat) then release. A newer trigger inside the window restarts.
+        # A combo-affecting MISS landing DURING the celebration breaks the latch
+        # (lazer getNextState: lastObjectHit=false overrides the Clear no-interrupt
+        # — the mascot drops to Fail at the miss instead of playing the party
+        # through), so we invalidate the latch when any miss falls in the window.
         clear_frame = None
         nclear = counts.get("clear", 0)
         if nclear and getattr(self, "_clear_triggers", None):
             ci = bisect.bisect_right(self._clear_triggers, t) - 1
             if ci >= 0:
-                elapsed = beat_index - self._beat_index(self._clear_triggers[ci])
+                trig_t = self._clear_triggers[ci]
+                elapsed = beat_index - self._beat_index(trig_t)
                 if 0 <= elapsed < nclear:
-                    clear_frame = elapsed
+                    lo = bisect.bisect_right(self._rt, trig_t)
+                    hi = bisect.bisect_right(self._rt, t)
+                    broke = any(self._res_ordered[k] == MISS
+                                for k in range(lo, hi))
+                    if not broke:
+                        clear_frame = elapsed
         if clear_frame is not None:
             state, frame = "clear", clear_frame
         elif (not last_hit) and "fail" in counts:
