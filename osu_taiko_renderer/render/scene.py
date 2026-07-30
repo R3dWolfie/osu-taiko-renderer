@@ -229,6 +229,7 @@ class TaikoSim:
         # byte-identically. The game-version-aware windows (lazer TaikoHitWindows
         # for lazer replays) are used ONLY inside the placement sweep in _judge.
         self.great_w, self.ok_w = od_to_hit_windows_ms(bm.od)
+        self._rate = getattr(bm, "rate", 1.0) or 1.0   # DT/NC=1.5, HT=0.75
         _gv = int(getattr(meta, "game_version", 0) or 0)
         if _gv >= LAZER_GAME_VERSION:
             self.sweep_great_w, self.sweep_ok_w = _lazer_taiko_windows(bm.od)
@@ -735,16 +736,18 @@ class TaikoSim:
         for hits judged within the last `window` ms."""
         lo = bisect.bisect_left(self._he_times, t - window)
         hi = bisect.bisect_right(self._he_times, t)
-        return [(e[1], e[2], t - e[0]) for e in self._hit_errors[lo:hi]]
+        return [(e[1] / self._rate, e[2], t - e[0]) for e in self._hit_errors[lo:hi]]
 
     def ur_at(self, t):
-        """Unstable rate = 10 × stddev of all hit errors up to t."""
+        """Unstable rate = 10 × stddev of hit errors up to t, in REAL time."""
         hi = bisect.bisect_right(self._he_times, t)
         if hi < 2:
             return 0.0
         mean = self._he_csum[hi] / hi
         var = self._he_csq[hi] / hi - mean * mean
-        return 10.0 * (max(0.0, var) ** 0.5)
+        # errors are MAP-time; osu reports UR in REAL time -> divide by the
+        # rate (fixes NC/DT UR ~1.5x inflation, e.g. 767 map -> 511 real).
+        return 10.0 * (max(0.0, var) ** 0.5) / self._rate
 
     def kiai_pulse(self, t):
         """Beat flash intensity during kiai (ArgonCirclePiece.OnNewBeat): a
