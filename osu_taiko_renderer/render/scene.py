@@ -792,7 +792,8 @@ class TaikoSim:
 
     def _mascot_sprites(self, t):
         """pippidon mascot at the playfield left, animating by state (kiai during
-        kiai, fail on low HP, else idle) at the skin's 60fps. Drawn behind the
+        kiai, fail on low HP, else idle), advancing ONE FRAME PER BEAT like
+        lazer's DrawableTaikoMascot (a BeatSyncedContainer). Drawn behind the
         notes; feet near the lane top, facing right."""
         g = self.geo
         counts = self.mascot_counts
@@ -806,12 +807,38 @@ class TaikoSim:
             state = "idle"
         else:
             state = next(iter(counts))
-        # Mascot animates at the skin's AnimationFramerate in REAL time: divide
-        # map-time by the play rate so DT/NC (rate 1.5) don't spin it 1.5x too
-        # fast (same map-time->real-time bug class as the UR/hit-error bar).
-        # Skins without an AnimationFramerate default to 60 (no-mod unchanged).
-        _fps = getattr(self.skin, "animation_framerate", 60.0) or 60.0
-        frame = int(t / self._rate * _fps / 1000.0) % counts[state]
+        # Frame advance = lazer's mascot, NOT the skin AnimationFramerate. In
+        # osu.Game.Rulesets.Taiko/UI, DrawableTaikoMascot is a BeatSyncedContainer
+        # and the idle/kiai/fail sprites are a ManualMascotTextureAnimation
+        # (IsPlaying=False), so OnNewBeat steps exactly ONE FRAME PER BEAT and
+        # loops: GotoFrame(currentFrame); currentFrame=(currentFrame+1)%FrameCount
+        # (Divisor=1 -> beatIndex = floor((trackTime - timingPoint.Time)/beatLen)).
+        # Driving off the beat instead of the render fps makes each pose persist
+        # across many video frames, so the motion is identical at 30fps and 60fps
+        # (the old `t*AnimationFramerate` sampled a 60fps sheet at frame time ->
+        # aliased to a near-static idle at 30fps and a hyperactive one at 60fps).
+        # / self._rate keeps a constant wall-clock bop under DT/NC/HT (the same
+        # map-time->real-time correction used for UR and the hit-error bar; at
+        # no-mod rate 1.0 this is byte-for-byte lazer's beat index).
+        bl = self.timing.beat_length(t) if self.timing is not None else 0.0
+        if bl and bl > 0.0:
+            ptime = 0.0
+            for pt, _b, _m in getattr(self.timing, "uninherited", []):
+                if pt <= t:
+                    ptime = pt
+                else:
+                    break
+            beat_index = int(((t - ptime) / self._rate) / bl)
+        else:
+            beat_index = int((t / self._rate) / 500.0)   # no timing: gentle 120BPM bop
+        n = counts[state]
+        if state == "clear":
+            # lazer's ClearMascotTextureAnimation plays once (Loop=false) and
+            # holds the last frame. Never selected by the state logic above, but
+            # clamp (don't loop) so a future clear state can't strobe.
+            frame = max(0, min(beat_index, n - 1))
+        else:
+            frame = beat_index % n
         pf_top = g.center_y - g.pf_h / 2.0
         vis = max(0.25, self._mascot_foot - self._mascot_head)
         mh = (g.pf_h * 1.05) / vis                      # visible body ~1.05x lane height
