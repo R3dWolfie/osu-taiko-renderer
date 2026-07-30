@@ -235,7 +235,7 @@ class ArgonHud:
                 pad = int(pill_px * 0.4)
                 pw, ph = tex.shape[1] + pad * 2, tex.shape[0] + pad
                 x0 = px - pw
-                rgb[my2:my2 + ph, x0:px] = (44, 50, 60)
+                rgb[int(my2):int(my2) + int(ph), int(x0):int(px)] = (44, 50, 60)
                 _blit(rgb, tex, x0 + pad, my2 + pad // 2, "tl")
                 px = x0 - int(w * 0.006)
 
