@@ -224,6 +224,7 @@ def build_taiko_hitsound_track(
     *, notes, note_hit, beatmap, sample_dirs, output_wav: Path,
     video_ms: float, start_ms: int, rate: float,
     miss_hitsound: bool = True,
+    nightcore: bool = False,
     press_edges: dict | None = None, ok_window_ms: float = 0.0,
 ) -> Path | None:
     """Build the stereo hitsound WAV at `output_wav`, aligned to the final video
@@ -276,8 +277,65 @@ def build_taiko_hitsound_track(
                     _mix(track, arr, (p - start_ms) / rate, gain)
                     placed += 1
 
-    if placed == 0:
+    nc_beats = 0
+    if nightcore:
+        nc_beats = _layer_metronome(track, beatmap, cache, dirs, start_ms, rate)
+
+    if placed == 0 and nc_beats == 0:
         return None
     np.clip(track, -1.0, 1.0, out=track)
     output_wav.parent.mkdir(parents=True, exist_ok=True)
     return _write_wav_f32(output_wav, track)
+
+
+_METRONOME_GAIN = 0.35        # beat-overlay click sits under the per-note hits
+
+
+def _layer_metronome(track, beatmap, cache, dirs, start_ms, rate) -> int:
+    """Beat-overlay metronome (site 'Beat overlay (metronome)' toggle): a clap
+    on every beat + a finish on every downbeat (beat 1 of the measure), across
+    the whole song, mixed into the hitsound track. Beats come from the map's
+    uninherited (red) timing points; the point's meter sets the measure length
+    (taiko already carries the (time, beat, meter) uninherited list it uses for
+    bar lines). Placed in VIDEO time ((t_map - start_ms)/rate) so DT/NC/HT stay
+    beat-aligned. Mod-INDEPENDENT — a general metronome, not gated on the NC
+    mod (mirrors the std/mania v2 overlay). Returns beats laid."""
+    timing = getattr(beatmap, "timing", None)
+    pts = list(getattr(timing, "uninherited", []) or []) if timing else []
+    if not pts:
+        return 0
+    # map-time horizon = the last sample the track can hold
+    horizon = start_ms + (track.shape[0] / SAMPLE_RATE * 1000.0) * (rate or 1.0)
+    default_set = getattr(beatmap, "default_sample_set", "normal") or "normal"
+
+    def _click(sound, t):
+        # resolve through the active sample point's set/index, then fall back
+        # to the default set and finally hitnormal so a beat never goes silent.
+        tp = _active_sample_point(getattr(beatmap, "sample_points", ()), int(t))
+        s_set = _SET_NAMES.get(tp.sample_set if tp else 0) or default_set
+        idx = (tp.custom_index if tp else 0) or 0
+        for names in (_candidate_names(s_set, sound, idx),
+                      _candidate_names(default_set, sound, idx),
+                      _candidate_names(s_set, "normal", idx)):
+            arr = _find(dirs, cache, names)
+            if arr is not None:
+                return arr
+        return None
+
+    laid = 0
+    for i, (ptime, beat, meter) in enumerate(pts):
+        beat = max(60.0, float(beat))          # cap <60ms (>1000 BPM) sanity
+        meter = int(meter) if meter and int(meter) > 0 else 4
+        seg_end = pts[i + 1][0] if i + 1 < len(pts) else horizon
+        seg_end = min(seg_end, horizon)
+        k = 0
+        t = float(ptime)
+        while t < seg_end:
+            downbeat = (k % meter == 0)
+            arr = _click("finish" if downbeat else "clap", t)
+            if arr is not None:
+                _mix(track, arr, (t - start_ms) / (rate or 1.0), _METRONOME_GAIN)
+                laid += 1
+            k += 1
+            t = ptime + k * beat
+    return laid

@@ -139,6 +139,10 @@ class RenderConfig:
     beatmap_hitsounds: bool = True
     # Miss / combo-break hitsound (default on): off silences combobreak.wav.
     miss_hitsound: bool = True
+    # Beat overlay (metronome): clap each beat + finish each downbeat across the
+    # whole song, mixed into the hitsound track. Off by default; the site's
+    # "Beat overlay (metronome)" toggle. Mod-independent (a general metronome).
+    nightcore_hitsounds: bool = False
     # timing / outro
     lead_in_ms: int = 1500
     tail_ms: int = 1500
