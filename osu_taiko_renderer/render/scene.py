@@ -379,21 +379,45 @@ class TaikoSim:
         # --- (C) choose the final miss set: header miss total + max_combo ---
         is_miss = self._reconcile(st)
 
-        # --- (D) assemble results: misses at their window-close time; hits keep
-        # the shipped greedy timing, split into the header's GREAT/OK by that
-        # (shipped) timing error so a clean play is byte-identical.
+        # --- (D) assemble results: misses at their window-close time; hits split
+        # into GREAT/OK by EACH NOTE'S OWN press timing against its hit window (an
+        # HONEST per-note split), NOT by a global timing RANK. The old rank split
+        # took the N worst-timed hits across the WHOLE map as the OKs, which dumped
+        # every OK onto arbitrary/late notes and held early accuracy at ~100%; an
+        # OK now shows up on the note the player was actually late/early on. The
+        # honest per-key sweep (B) already classified every genuinely-pressed note
+        # (sres = GREAT iff |press error| <= great window, else OK); we keep that
+        # split verbatim and only nudge the great/ok TOTALS to the .osr header with
+        # the FEWEST boundary changes — demote the worst-timed greats (nearest the
+        # OK edge) or promote the best-timed OKs (nearest the GREAT edge). A clean
+        # play is unchanged: every note is a window-great, honest greats == header
+        # greats, nudge count 0.
         m = self.meta
-        if _TAIKO_ALWAYS_HONEST:
-            hg = sum(1 for r in st.res if r == GREAT)   # honest great/ok split
-        elif m is not None:
-            hg = int(getattr(m, "count_300", 0) or 0)
-        else:
-            hg = sum(1 for i in range(n) if not is_miss[i])
         hit_idx = [i for i in range(n) if not is_miss[i]]
-        hit_idx.sort(key=lambda i: old_err[i])       # stable: ties keep note order
+        hon_great = [i for i in hit_idx if real_press[i] and sres[i] == GREAT]
+        if _TAIKO_ALWAYS_HONEST or m is None:
+            hg = len(hon_great)
+        else:
+            hg = max(0, min(int(getattr(m, "count_300", 0) or 0), len(hit_idx)))
+        if len(hon_great) >= hg:
+            # too many window-greats: demote the worst-timed (nearest the OK edge).
+            great_set = set(sorted(hon_great, key=lambda i: s_err[i])[:hg])
+        else:
+            # too few: promote the best-timed OKs (nearest the GREAT edge) that had
+            # a genuine press, then any remaining (reconcile-fabricated) hits.
+            great_set = set(hon_great)
+            for i in sorted((i for i in hit_idx if i not in great_set
+                             and real_press[i]), key=lambda i: s_err[i]):
+                if len(great_set) >= hg:
+                    break
+                great_set.add(i)
+            for i in hit_idx:
+                if len(great_set) >= hg:
+                    break
+                great_set.add(i)
         results: list[tuple[int, str]] = [(0, MISS)] * n
-        for rank, i in enumerate(hit_idx):
-            results[i] = (old_hit_t[i], GREAT if rank < hg else OK)
+        for i in hit_idx:
+            results[i] = (old_hit_t[i], GREAT if i in great_set else OK)
         for i in range(n):
             if is_miss[i]:
                 results[i] = (int(notes[i].time_ms + ok_w), MISS)
