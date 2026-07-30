@@ -606,12 +606,29 @@ class TaikoSim:
         for p in range(n):
             if hmiss[p] and p not in protect:
                 chosen.add(p)
-        # (d) top up to exactly M with the most miss-like notes OUTSIDE the
-        # protected run (never break the clean stretch)
+        # (d) top up to exactly M. The extra misses beyond the honest breaks and
+        # the protected-run boundary trims have no honest home (the sim already
+        # found every pressless combo break); a real play piles its misses in the
+        # same hard bursts, so CLUSTER each extra next to an already-chosen break
+        # rather than puncturing a pristine clean run. Ranking purely by
+        # miss-likeness dumped a fabricated miss into the clean opening (a lone
+        # slightly-late hit early on out-scored notes beside the real bursts),
+        # breaking a combo the reference play holds clean for 140+. Rank the pool
+        # by distance to the nearest chosen miss first, then by miss-likeness.
         if len(chosen) < M:
+            anchors = sorted(chosen)
+
+            def _cluster_dist(p):
+                j = bisect.bisect_left(anchors, p)
+                best = n
+                for k in (j - 1, j):
+                    if 0 <= k < len(anchors):
+                        best = min(best, abs(anchors[k] - p))
+                return best
+
             pool = sorted((p for p in range(n)
                            if p not in chosen and p not in protect),
-                          key=lambda p: (-qpos[p], p))
+                          key=lambda p: (_cluster_dist(p), -qpos[p], p))
             for p in pool:
                 if len(chosen) >= M:
                     break
