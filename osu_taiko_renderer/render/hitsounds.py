@@ -225,6 +225,7 @@ def build_taiko_hitsound_track(
     video_ms: float, start_ms: int, rate: float,
     miss_hitsound: bool = True,
     nightcore: bool = False,
+    nc_mod: bool = False,
     press_edges: dict | None = None, ok_window_ms: float = 0.0,
 ) -> Path | None:
     """Build the stereo hitsound WAV at `output_wav`, aligned to the final video
@@ -281,7 +282,16 @@ def build_taiko_hitsound_track(
     if nightcore:
         nc_beats = _layer_metronome(track, beatmap, cache, dirs, start_ms, rate)
 
-    if placed == 0 and nc_beats == 0:
+    # ModNightcore beat overlay — AUTOMATIC when the Nightcore mod is active,
+    # independent of the `nightcore` metronome toggle above (both may lay).
+    # Taiko has no readily-available SliderTickRate on the beatmap, so hats
+    # play unconditionally (osu gates them on SliderTickRate%2==0).
+    nc_mod_beats = 0
+    if nc_mod:
+        nc_mod_beats = _layer_nightcore_mod(track, beatmap, cache, dirs,
+                                            start_ms, rate, play_hats=True)
+
+    if placed == 0 and nc_beats == 0 and nc_mod_beats == 0:
         return None
     np.clip(track, -1.0, 1.0, out=track)
     output_wav.parent.mkdir(parents=True, exist_ok=True)
@@ -338,4 +348,79 @@ def _layer_metronome(track, beatmap, cache, dirs, start_ms, rate) -> int:
                 laid += 1
             k += 1
             t = ptime + k * beat
+    return laid
+
+
+# --- ModNightcore beat overlay (NC-mod-gated, distinct from the metronome) -----
+
+_NC_MOD_GAIN = 0.5        # nightcore-kick/clap/hat/finish drums
+
+
+def _nc_pattern(k: int, seg_len: int, mod: int, clap_pos: int, play_hats: bool):
+    """One half-beat of osu! ModNightcore.NightcoreBeatContainer.OnNewBeat.
+    `k` = half-beat index from the red timing point (firstBeat==0 per segment,
+    BeatSyncedContainer Divisor=2). Yields the sound name(s) to play this step:
+    kick on segment beat 0 mod `mod`, clap on `clap_pos`, else hat (if enabled);
+    finish additionally at each segment start."""
+    bseg = k % seg_len
+    r = bseg % mod
+    if r == 0:
+        yield "kick"
+    elif r == clap_pos:
+        yield "clap"
+    elif play_hats:
+        yield "hat"
+    if bseg == 0:
+        yield "finish"
+
+
+def _nc_find(dirs, cache, base: str) -> np.ndarray | None:
+    return _find(dirs, cache, [f"{base}.wav", f"{base}.ogg", f"{base}.mp3"])
+
+
+def _layer_nightcore_mod(track, beatmap, cache, dirs, start_ms, rate,
+                         *, play_hats: bool = True) -> int:
+    """osu! ModNightcore beat overlay — the drum pattern osu! plays on each
+    beat AUTOMATICALLY while the Nightcore mod is active. NOT the general
+    'Beat overlay (metronome)' (_layer_metronome) above — both can lay onto
+    the same track. Half-beat grid (Divisor=2): within a 4-bar segment, kick
+    on the downbeat of each `mod`-cycle, clap on the backbeat, hat on the
+    off-beats, plus a finish cymbal at each segment start — resolved from the
+    SKIN's nightcore-kick/-clap/-hat/-finish samples. A skin that ships SILENT
+    nightcore samples correctly plays (near-)nothing; a skin that omits them
+    plays nothing here (no synth fallback). Beats come from the map's
+    uninherited (red) timing points; placed in VIDEO time ((t-start)/rate) so
+    they ride the sped-up track. Returns samples laid.
+
+    Port of osu.Game/Rulesets/Mods/ModNightcore.NightcoreBeatContainer."""
+    timing = getattr(beatmap, "timing", None)
+    pts = list(getattr(timing, "uninherited", []) or []) if timing else []
+    if not pts:
+        return 0
+    horizon = start_ms + (track.shape[0] / SAMPLE_RATE * 1000.0) * (rate or 1.0)
+    samples = {name: _nc_find(dirs, cache, f"nightcore-{name}")
+               for name in ("kick", "clap", "hat", "finish")}
+    if not any(v is not None for v in samples.values()):
+        return 0
+    laid = 0
+    for i, (ptime, beat, meter) in enumerate(pts):
+        beat = max(60.0, float(beat))          # cap <60ms (>1000 BPM) sanity
+        half = beat / 2.0
+        sig = int(meter) if meter and int(meter) > 0 else 4
+        seg_len = sig * 8                      # beatsPerBar * Divisor(2) * 4 bars
+        triplet = (sig % 3 == 0)
+        mod = 6 if triplet else 4
+        clap_pos = 3 if triplet else 2
+        seg_end = pts[i + 1][0] if i + 1 < len(pts) else horizon
+        seg_end = min(seg_end, horizon)
+        k = 0
+        t = float(ptime)
+        while t < seg_end:
+            for name in _nc_pattern(k, seg_len, mod, clap_pos, play_hats):
+                arr = samples.get(name)
+                if arr is not None:
+                    _mix(track, arr, (t - start_ms) / (rate or 1.0), _NC_MOD_GAIN)
+                    laid += 1
+            k += 1
+            t = ptime + k * half
     return laid

@@ -278,6 +278,7 @@ def render_core(
                 video_ms=total_dur_s * 1000.0, start_ms=start_ms, rate=rate,
                 miss_hitsound=cfg.miss_hitsound,
                 nightcore=cfg.nightcore_hitsounds,
+                nc_mod=bool(int(getattr(meta, "mods", 0) or 0) & 512),  # NC mod
                 press_edges=sim.drum_press_edges(), ok_window_ms=sim.ok_w)
         except Exception as _e:  # noqa: BLE001 — hitsounds never break a render
             print(f"[taiko-renderer] hitsound build skipped: {_e}", file=sys.stderr)
