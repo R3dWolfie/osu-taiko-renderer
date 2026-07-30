@@ -261,8 +261,9 @@ def render_core(
         except Exception as _e:  # noqa: BLE001 — hitsounds never break a render
             print(f"[taiko-renderer] hitsound build skipped: {_e}", file=sys.stderr)
             hitsound = None
+    is_nc = bool(int(getattr(meta, "mods", 0) or 0) & 512)   # Nightcore bit
     proc = _spawn_ffmpeg(cfg, output_path, audio, start_ms, rate, total_dur_s,
-                         hitsound=hitsound)
+                         hitsound=hitsound, is_nc=is_nc)
     # HUD: legacy (true-to-skin) when the skin ships a score font, else Argon.
     from osu_taiko_renderer.argon.hud import ArgonHud
     from osu_taiko_renderer.hud.skin_hud import LegacyHud
@@ -489,7 +490,7 @@ def nvenc_target_bps(w: int, h: int, fps: float) -> int:
 
 def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
                   start_ms: int, rate: float = 1.0, total_dur_s: float | None = None,
-                  hitsound: Path | None = None):
+                  hitsound: Path | None = None, is_nc: bool = False):
     w, h = cfg.resolution
     enc, dev = _probe_encoder(cfg)
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
@@ -519,7 +520,7 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
         af = _audio_filter(start_ms, rate, total_dur_s,
                            music_volume=cfg.music_volume,
                            general_volume=cfg.general_volume,
-                           audio_offset_ms=cfg.audio_offset_ms)
+                           audio_offset_ms=cfg.audio_offset_ms, is_nc=is_nc)
         if hitsound is not None:
             # [1:a] song -> music chain; [2:a] hitsound dub scaled by the preset
             # effects (general) volume; amix without auto-normalise so neither
@@ -550,12 +551,17 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
 
 def _audio_filter(start_ms: int, rate: float = 1.0, total_dur_s: float | None = None,
                   music_volume: int = 100, general_volume: int = 100,
-                  audio_offset_ms: int = 0) -> str:
+                  audio_offset_ms: int = 0, is_nc: bool = False) -> str:
     """Speed the song to the mod rate (DT/HT), then align so video t=0 is
     `start_ms` into the rate-adjusted song. Applies preset volume + offset."""
     parts = []
     if abs(rate - 1.0) > 1e-3:
-        parts.append(f"atempo={rate:.4f}")  # speed only (no pitch shift)
+        parts.append(f"atempo={rate:.4f}")  # speed
+        if is_nc:
+            # Nightcore = speed AND pitch up by the rate. atempo above keeps the
+            # original pitch (that's DT); rubberband shifts pitch up to match,
+            # sample-rate-agnostic. Fixes "NC render using DT audio" (Red).
+            parts.append(f"rubberband=pitch={rate:.4f}")
     # start_ms is in MAP time; after atempo the song plays at map/rate, so the
     # real offset where video t=0 lands is start_ms/rate. audio_offset shifts the
     # song vs gameplay (negative = audio earlier).
