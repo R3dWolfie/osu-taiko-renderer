@@ -8,7 +8,7 @@ from PIL import Image, ImageChops, ImageFilter
 
 from . import _const as C
 from .font import get_font
-from .textures import bake_drum_flash, bake_explosion, bake_ring
+from .textures import bake_drum_flash, bake_explosion, bake_note_flash, bake_ring
 
 _JUDGE_TEXT = {"great": "GREAT", "ok": "OK", "miss": "MISS"}
 _JUDGE_COL = {"great": C.JUDGE_GREAT, "ok": C.JUDGE_OK, "miss": C.JUDGE_MISS}
@@ -209,6 +209,28 @@ class ArgonEffects:
         # normal GREAT shows nothing (e.g. "+39 nofinish"). Per-result absence
         # is handled as "no popup" in _judge_tex, not an Argon text fallback.
         self._use_skin_judge = bool(self._skin_judge)
+        # Legacy-lane hit-target flash (issue #118): a skin shipping taiko-bar-right
+        # draws its OWN (opaque, dark) hit target, so the Argon per-hit explosion —
+        # a soft glow that reads clearly through the translucent Argon target — is
+        # nearly invisible over it, i.e. legacy skins never appeared to "flash" the
+        # hit on the drum. lazer's hit target flashes the note colour on every hit
+        # (don=red / kat=blue, the KiaiHitExplosion/HitTarget accent); mirror that
+        # with a solid accent disc at the target, faded on the explosion envelope,
+        # so legacy skins flash like Argon. Argon (no legacy lane) is unchanged.
+        self._legacy_lane = bool(skin.has("taiko-bar-right"))
+        self._hit_flash = {}
+        if self._legacy_lane:
+            base = bake_note_flash().astype(np.float32)   # white fill disc
+            d = int(round(self.geo.note_d * 0.95))
+            # note accent (don=red / kat=blue); additive over the dark target so
+            # the dominant channel saturates to a clean red / blue fill.
+            for is_rim, tint in ((False, (1.0, 0.05, 0.05)),
+                                 (True, (0.05, 0.62, 1.0))):
+                col = base.copy()
+                col[..., :3] *= np.asarray(tint, np.float32)
+                im8 = np.asarray(Image.fromarray(col.astype(np.uint8))
+                                 .resize((d, d), Image.LANCZOS))
+                self._hit_flash[is_rim] = _prebake_add(im8)
         # Pre-scale explosion textures to the two note sizes (resizing every
         # frame per active explosion was a render-time hotspot). Stored as
         # _prebake_add tuples (float32 rgb + alpha/255, alpha-bbox-cropped) so
@@ -347,6 +369,11 @@ class ArgonEffects:
                 continue
             _add_prescaled(rgb, self._exp_scaled[(is_rim, big)],
                            g.target_x, g.center_y, a)
+            # legacy lane: add the solid note-colour flash filling the hit target
+            # (the Argon explosion alone is invisible over an opaque skin target).
+            if self._legacy_lane:
+                _add_prescaled(rgb, self._hit_flash[is_rim],
+                               g.target_x, g.center_y, min(1.0, a * 0.85))
         # judgement popups. Two distinct lazer behaviours:
         #   * SKIN (legacy) → LegacyHitExplosion: the taiko-hit300/100/0 sprite
         #     BURSTS at the hit target (centred on the drum), scale-punch + fade.
