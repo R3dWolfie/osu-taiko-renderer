@@ -569,13 +569,21 @@ def _audio_filter(start_ms: int, rate: float = 1.0, total_dur_s: float | None = 
     `start_ms` into the rate-adjusted song. Applies preset volume + offset."""
     parts = []
     if abs(rate - 1.0) > 1e-3:
-        parts.append(f"atempo={rate:.4f}")  # speed
         if is_nc:
-            # Nightcore = speed AND pitch up by the rate. atempo above keeps the
-            # original pitch (that's DT); rubberband shifts pitch up to match,
-            # sample-rate-agnostic. Fixes "NC render using DT audio" (Red).
-            parts.append(f"rubberband=pitch={rate:.4f}")
-    # start_ms is in MAP time; after atempo the song plays at map/rate, so the
+            # Nightcore = a PURE RESAMPLE: speed AND pitch up together by the
+            # rate, exactly like osu (and the mania v2 renderer). Reinterpreting
+            # the samples at SR*rate then resampling back to SR is artifact-free.
+            # The old atempo time-stretch + rubberband pitch-shift each added
+            # audible smear vs in-game (reported distorted NC audio). Normalise to
+            # 44100 first so a 48 kHz master still speeds by exactly `rate` — the
+            # asetrate value is absolute, so the input rate must be known.
+            parts.append("aresample=44100")
+            parts.append(f"asetrate={int(round(44100 * rate))}")
+            parts.append("aresample=44100")
+        else:
+            # Plain DT/HT: pitch-PRESERVING time-stretch (that IS DT/HT).
+            parts.append(f"atempo={rate:.4f}")  # speed
+    # start_ms is in MAP time; after the speed-up the song plays at map/rate, so the
     # real offset where video t=0 lands is start_ms/rate. audio_offset shifts the
     # song vs gameplay (negative = audio earlier).
     real_start = (start_ms - audio_offset_ms) / rate
