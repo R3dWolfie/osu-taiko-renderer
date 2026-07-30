@@ -40,6 +40,10 @@ def main(argv: list[str] | None = None) -> int:
                          "results card + the live counter's ENDPOINT are pinned "
                          "to this; the live curve keeps its rosu shape. Omit "
                          "to keep the rosu estimate.")
+    ap.add_argument("--sr", type=float, default=None,
+                    help="EXACT star rating to show (osu's OFFICIAL SR). The "
+                         "results card's star-rating pill is pinned to this. "
+                         "Omit to keep the rosu SR estimate.")
     ap.add_argument("--hit-counter", action=BA, default=True)
     ap.add_argument("--beatmap-hitsounds", action=BA, default=True,
                     help="use the beatmap's custom hitsounds (off = skin/default only)")
@@ -105,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         show_pp_counter=args.pp_counter,
         show_hit_counter=args.hit_counter,
         pp_override=args.pp,
+        sr_override=args.sr,
         watermark=args.watermark,
         music_volume=args.music_volume,
         general_volume=args.general_volume,

@@ -180,6 +180,11 @@ class RenderConfig:
     # live counter's endpoint are pinned to this value (the live curve keeps its
     # rosu/score-progress SHAPE; only the endpoint is anchored). See render.py.
     pp_override: float | None = None
+    # EXACT star rating to display (osu's OFFICIAL SR, passed by the service via
+    # --sr). None -> keep the rosu SR estimate. When set, the results card's
+    # star-rating pill shows this value exactly. Static display value (there is
+    # no live SR counter). Mirrors pp_override -- see render.py.
+    sr_override: float | None = None
     # intro R3D "R" splash (parity with std/catch show_logo; off by default so
     # existing renders are unchanged)
     show_logo: bool = False

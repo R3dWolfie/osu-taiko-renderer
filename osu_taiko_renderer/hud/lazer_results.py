@@ -803,12 +803,18 @@ def _compute_stars_pp(osu_path, mods: int, meta, sim=None):
     `max_pp` = the perfect-play (SS) pp for the stage-2 PERFORMANCE footer.
     Fail-soft → (None, None, None)."""
     pp_pipeline = None
+    stars_pipeline = None
     if sim is not None:
         fp = getattr(sim, "_final_pp", None)
         if fp:
             pp_pipeline = float(fp)
+        # --sr: the dispatch layer's EXACT official SR (render.py sets
+        # sim._final_stars from cfg.sr_override). Overrides the rosu SR below.
+        so = getattr(sim, "_final_stars", None)
+        if so is not None:
+            stars_pipeline = float(so)
     if osu_path is None:
-        return None, pp_pipeline, None
+        return stars_pipeline, pp_pipeline, None
     try:
         import rosu_pp_py as rosu
         rbm = rosu.Beatmap(path=str(osu_path))
@@ -825,6 +831,8 @@ def _compute_stars_pp(osu_path, mods: int, meta, sim=None):
             stars = float(rosu.Difficulty(mods=int(mods)).calculate(rbm).stars)
         except Exception:  # noqa: BLE001 — stars are optional
             stars = None
+        if stars_pipeline is not None:      # --sr override wins over rosu SR
+            stars = stars_pipeline
         pp = pp_pipeline
         if pp is None:
             try:
@@ -845,7 +853,7 @@ def _compute_stars_pp(osu_path, mods: int, meta, sim=None):
             max_pp = None
         return stars, pp, max_pp
     except Exception:  # noqa: BLE001 — no rosu / unreadable map → no row values
-        return None, pp_pipeline, None
+        return stars_pipeline, pp_pipeline, None
 
 
 def _compute_strains(osu_path, mods: int) -> list[float]:

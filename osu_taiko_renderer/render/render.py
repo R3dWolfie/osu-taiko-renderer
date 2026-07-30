@@ -185,6 +185,13 @@ def render_core(
     # results cell.
     if getattr(cfg, "pp_override", None) is not None:
         sim._final_pp = float(cfg.pp_override)
+    # --sr: pin the results card's star-rating pill to the EXACT star rating
+    # passed by the dispatch layer (osu's OFFICIAL SR). Static display value —
+    # there is no live SR counter, so this only feeds the results screen. The
+    # ported results screen (CatchLazerResults via _compute_stars_pp) prefers
+    # sim._final_stars over the rosu SR. No-op when --sr is absent.
+    if getattr(cfg, "sr_override", None) is not None:
+        sim._final_stars = float(cfg.sr_override)
     # preempt = the first object's actual on-screen travel time (scroll_time is
     # the SV=1 base; real notes scroll faster, so the visible time is
     # scroll_time / scroll_vel). Using the raw scroll_time left ~5s of empty
