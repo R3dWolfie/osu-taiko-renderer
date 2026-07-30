@@ -461,8 +461,33 @@ class TaikoSim:
             else:
                 miss += 1; combo = 0; hp = max(0.0, hp - 0.05)
             self._cum.append((combo, great, ok, miss, score, hp))
+        # per-note results in TIME order (mascot lastObjectHit / clear triggers)
+        self._res_ordered = [results[i][1] for i in order]
         self._build_scorev2(order, results)
         self._setup_health(order, results)
+        self._compute_mascot_clears(order)
+
+    def _compute_mascot_clears(self, order):
+        """Precompute Clear-celebration trigger times (lazer DrawableTaikoMascot
+        .onNewResult): a combo-affecting HIT that lands the combo on a multiple of
+        50 ((ComboAtJudgement+1)%50==0 -> combo-after is a nonzero x50), or a
+        COMPLETED swell (mash count reached required_hits). _mascot_sprites latches
+        the Clear animation from each trigger and plays it through ONCE."""
+        trig = []
+        for k in range(len(order)):
+            if self._res_ordered[k] != MISS:
+                combo_after = self._cum[k][0]
+                if combo_after > 0 and combo_after % 50 == 0:
+                    trig.append(int(self._rt[k]))
+        for o in self.rolls:
+            if o.kind is TaikoType.SWELL:
+                end_ms = o.end_ms or o.time_ms
+                req = max(1, int(getattr(o, "required_hits", 0) or 0))
+                lo = bisect.bisect_left(self._hit_times, o.time_ms)
+                hi = bisect.bisect_right(self._hit_times, end_ms)
+                if (hi - lo) >= req:
+                    trig.append(int(end_ms))
+        self._clear_triggers = sorted(trig)
 
     # --- reconcile (header = count-authority; std's reconcile-after-sim) -------
 
@@ -842,38 +867,11 @@ class TaikoSim:
         f = 1.0 - age / AC.DRUM_PRESS_UP_MS
         return AC.DRUM_PRESS_ALPHA * (f ** 5)        # OutQuint-ish
 
-    def _mascot_sprites(self, t):
-        """pippidon mascot at the playfield left, animating by state (kiai during
-        kiai, fail on low HP, else idle), advancing ONE FRAME PER BEAT like
-        lazer's DrawableTaikoMascot (a BeatSyncedContainer). Drawn behind the
-        notes; feet near the lane top, facing right."""
-        g = self.geo
-        counts = self.mascot_counts
-        hp = self._state_at(t)[6]
-        in_kiai = bool(self.kiai) and any(s <= t < e for s, e in self.kiai)
-        if in_kiai and "kiai" in counts:
-            state = "kiai"
-        elif hp < 0.5 and "fail" in counts:
-            state = "fail"
-        elif "idle" in counts:
-            state = "idle"
-        else:
-            state = next(iter(counts))
-        # Frame advance = lazer's mascot, NOT the skin AnimationFramerate. In
-        # osu.Game.Rulesets.Taiko/UI, DrawableTaikoMascot is a BeatSyncedContainer
-        # and the idle/kiai/fail sprites are a ManualMascotTextureAnimation
-        # (IsPlaying=False), so OnNewBeat steps exactly ONE FRAME PER BEAT and
-        # loops: GotoFrame(currentFrame); currentFrame=(currentFrame+1)%FrameCount
-        # (Divisor=1 -> beatIndex = floor((trackTime - timingPoint.Time)/beatLen)).
-        # Driving off the beat instead of the render fps makes each pose persist
-        # across many video frames, so the motion is identical at 30fps and 60fps
-        # (the old `t*AnimationFramerate` sampled a 60fps sheet at frame time ->
-        # aliased to a near-static idle at 30fps and a hyperactive one at 60fps).
-        # NO / self._rate here: lazer beat-syncs the mascot to the (sped-up)
-        # track, so under DT/NC it must bop ~1.5x faster in wall-clock to match
-        # the atempo'd audio. map-time t is already compressed by rate in the
-        # video, so the beat index speeds up on its own. At no-mod this is
-        # byte-for-byte lazer's beat index (Red 2026-07-30: DT fidelity).
+    def _beat_index(self, t):
+        """lazer BeatSyncedContainer beat index at map-time t: floor((t -
+        timingPoint.Time) / beatLength) (Divisor=1). Drives the mascot ONE FRAME
+        PER BEAT so the motion is fps-independent; under DT/NC the beat index
+        speeds up on its own because map-time is already compressed by rate."""
         bl = self.timing.beat_length(t) if self.timing is not None else 0.0
         if bl and bl > 0.0:
             ptime = 0.0
@@ -882,17 +880,54 @@ class TaikoSim:
                     ptime = pt
                 else:
                     break
-            beat_index = int((t - ptime) / bl)
+            return int((t - ptime) / bl)
+        return int(t / 500.0)             # no timing: 120BPM bop (sped up by rate)
+
+    def _mascot_sprites(self, t):
+        """pippidon mascot at the playfield left, animating ONE FRAME PER BEAT
+        (lazer DrawableTaikoMascot, a BeatSyncedContainer). State follows lazer's
+        getNextState / onNewResult exactly:
+          * CLEAR — celebration; triggered in onNewResult when a combo-affecting
+            HIT lands combo on a multiple of 50, or a swell completes. It plays
+            THROUGH ONCE (latched for its frame count, one frame/beat) and holds,
+            overriding the other states, then reverts.
+          * FAIL — chosen when `lastObjectHit` is false, i.e. the most recent
+            combo-affecting object was a MISS (NOT an HP threshold — a healthy
+            player still shows Fail for one section after a miss, and a low-HP
+            player mid-combo does not).
+          * KIAI during kiai, else IDLE.
+        Drawn over the input drum, feet near the lane top, facing right."""
+        g = self.geo
+        counts = self.mascot_counts
+        beat_index = self._beat_index(t)
+        in_kiai = bool(self.kiai) and any(s <= t < e for s, e in self.kiai)
+        # lastObjectHit: the most recent combo-affecting judged note <= t (every
+        # don/kat note affects combo) — was it a hit? True before the first note.
+        last_hit = True
+        j = bisect.bisect_right(self._rt, t) - 1
+        if j >= 0:
+            last_hit = self._res_ordered[j] != MISS
+        # CLEAR latch: from the most recent trigger <= t, play its frames once
+        # (one per beat) then release. A newer trigger inside the window restarts.
+        clear_frame = None
+        nclear = counts.get("clear", 0)
+        if nclear and getattr(self, "_clear_triggers", None):
+            ci = bisect.bisect_right(self._clear_triggers, t) - 1
+            if ci >= 0:
+                elapsed = beat_index - self._beat_index(self._clear_triggers[ci])
+                if 0 <= elapsed < nclear:
+                    clear_frame = elapsed
+        if clear_frame is not None:
+            state, frame = "clear", clear_frame
+        elif (not last_hit) and "fail" in counts:
+            state, frame = "fail", beat_index % counts["fail"]
+        elif in_kiai and "kiai" in counts:
+            state, frame = "kiai", beat_index % counts["kiai"]
+        elif "idle" in counts:
+            state, frame = "idle", beat_index % counts["idle"]
         else:
-            beat_index = int(t / 500.0)   # no timing: 120BPM bop (sped up by rate)
-        n = counts[state]
-        if state == "clear":
-            # lazer's ClearMascotTextureAnimation plays once (Loop=false) and
-            # holds the last frame. Never selected by the state logic above, but
-            # clamp (don't loop) so a future clear state can't strobe.
-            frame = max(0, min(beat_index, n - 1))
-        else:
-            frame = beat_index % n
+            state = next(iter(counts))
+            frame = beat_index % counts[state]
         pf_top = g.center_y - g.pf_h / 2.0
         vis = max(0.25, self._mascot_foot - self._mascot_head)
         mh = (g.pf_h * 1.05) / vis                      # visible body ~1.05x lane height
