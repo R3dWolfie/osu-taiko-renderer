@@ -173,6 +173,18 @@ def render_core(
     sim = TaikoSim(bm, frames, cfg, skin=skin, has_bg=bg is not None, meta=meta)
     if cfg.show_pp_counter and osu_path is not None:
         sim.compute_pp_curve(osu_path, meta.mods)
+    # --pp: pin the FINAL pp (results card + live-counter endpoint) to the EXACT
+    # value passed by the dispatch layer (osu's OFFICIAL pp). The live curve
+    # keeps its rosu/score-progress SHAPE — build_scene computes the live counter
+    # as `_final_pp * (score / final_score)`, so overriding _final_pp scales the
+    # whole curve by a constant and only moves the ENDPOINT (mirrors the score
+    # endpoint-anchor, #91). Set unconditionally (independent of show_pp_counter)
+    # so the results card shows it even when the live counter is off — EVERY pp
+    # consumer reads sim._final_pp: the live counter (build_scene), the ported
+    # results screen (CatchLazerResults via _compute_stars_pp), and the argon
+    # results cell.
+    if getattr(cfg, "pp_override", None) is not None:
+        sim._final_pp = float(cfg.pp_override)
     # preempt = the first object's actual on-screen travel time (scroll_time is
     # the SV=1 base; real notes scroll faster, so the visible time is
     # scroll_time / scroll_vel). Using the raw scroll_time left ~5s of empty

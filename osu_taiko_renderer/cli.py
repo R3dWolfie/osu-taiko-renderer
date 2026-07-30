@@ -35,6 +35,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--results", action=BA, default=True, help="results-screen outro")
     ap.add_argument("--letterbox-breaks", action=BA, default=True)
     ap.add_argument("--pp-counter", action=BA, default=True)
+    ap.add_argument("--pp", type=float, default=None,
+                    help="EXACT final pp to show (osu's OFFICIAL pp). The "
+                         "results card + the live counter's ENDPOINT are pinned "
+                         "to this; the live curve keeps its rosu shape. Omit "
+                         "to keep the rosu estimate.")
     ap.add_argument("--hit-counter", action=BA, default=True)
     ap.add_argument("--beatmap-hitsounds", action=BA, default=True,
                     help="use the beatmap's custom hitsounds (off = skin/default only)")
@@ -95,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         scroll_time_ms=args.scroll_time,
         show_pp_counter=args.pp_counter,
         show_hit_counter=args.hit_counter,
+        pp_override=args.pp,
         watermark=args.watermark,
         music_volume=args.music_volume,
         general_volume=args.general_volume,

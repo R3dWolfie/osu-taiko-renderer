@@ -171,6 +171,11 @@ class RenderConfig:
     show_mods: bool = True
     show_pp_counter: bool = True
     show_hit_counter: bool = True
+    # EXACT final pp to display (osu's OFFICIAL pp, passed by the service via
+    # --pp). None -> keep the rosu estimate. When set, the results card AND the
+    # live counter's endpoint are pinned to this value (the live curve keeps its
+    # rosu/score-progress SHAPE; only the endpoint is anchored). See render.py.
+    pp_override: float | None = None
     # intro R3D "R" splash (parity with std/catch show_logo; off by default so
     # existing renders are unchanged)
     show_logo: bool = False
