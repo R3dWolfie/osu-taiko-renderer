@@ -178,19 +178,32 @@ class TaikoSim:
             if _n:
                 self.mascot_counts[_st] = _n
         self.sk_mascot = bool(self.mascot_counts)
-        self._mascot_aspect = 1.0
-        self._mascot_head, self._mascot_foot = 0.0, 1.0     # visible-body y fractions
+        # Mascot sizing metrics (lazer DrawableTaikoMascot model): every state's
+        # frames are drawn at their OWN native size × a shared scale, pinned by
+        # the sprite's BOTTOM-LEFT canvas corner (feet baseline + left edge), so a
+        # taller pose (clear arms-up / fail) rises UPWARD instead of being squashed
+        # into the idle frame's box. Per state we keep the native canvas size; per
+        # state AND overall we keep the greatest UPWARD reach (opaque height above
+        # the canvas bottom, in native px) so the scale can be capped to keep even
+        # the tallest pose fully on-screen.
+        self._mascot_native: dict[str, tuple[int, int]] = {}   # state -> (w, h) px
+        self._mascot_up: dict[str, float] = {}                 # state -> max reach above feet
         if self.sk_mascot:
-            _s0 = "idle" if "idle" in self.mascot_counts else next(iter(self.mascot_counts))
-            _im = self.skin.load(f"pippidon{_s0}0")
-            if _im is None:                      # static single-frame mascot
-                _im = self.skin.load(f"pippidon{_s0}")
-            if _im is not None and _im.shape[0]:
-                self._mascot_aspect = _im.shape[1] / _im.shape[0]
-                _rows = (_im[..., 3] > 8).any(axis=1).nonzero()[0]
-                if len(_rows):
-                    self._mascot_head = _rows[0] / _im.shape[0]
-                    self._mascot_foot = (_rows[-1] + 1) / _im.shape[0]
+            for _st, _cnt in self.mascot_counts.items():
+                for _fi in range(_cnt):
+                    _im = self.skin.load(f"pippidon{_st}{_fi}")
+                    if _im is None and _cnt == 1:            # static single-frame
+                        _im = self.skin.load(f"pippidon{_st}")
+                    if _im is None or not _im.shape[0]:
+                        continue
+                    _h, _w = int(_im.shape[0]), int(_im.shape[1])
+                    self._mascot_native.setdefault(_st, (_w, _h))
+                    _rows = (_im[..., 3] > 8).any(axis=1).nonzero()[0]
+                    if len(_rows):
+                        # opaque height from the canvas BOTTOM up to the topmost
+                        # opaque row = how far this pose reaches above the feet.
+                        _up = float(_h - int(_rows[0]))
+                        self._mascot_up[_st] = max(self._mascot_up.get(_st, 1.0), _up)
 
         def _aspect(name, default):
             img = self.skin.load(name)
@@ -928,14 +941,27 @@ class TaikoSim:
         else:
             state = next(iter(counts))
             frame = beat_index % counts[state]
+        # --- placement (lazer DrawableTaikoMascot, Origin=BottomLeft): pin the
+        # sprite's BOTTOM-LEFT canvas corner at (feet baseline, left of the input
+        # drum) and draw the CURRENT state at its native aspect × a shared scale.
         pf_top = g.center_y - g.pf_h / 2.0
-        vis = max(0.25, self._mascot_foot - self._mascot_head)
-        mh = (g.pf_h * 1.05) / vis                      # visible body ~1.05x lane height
-        mw = mh * self._mascot_aspect
-        feet_y = pf_top + g.pf_h * 0.16                 # feet on the drum top (hair clears the drum)
-        cy = feet_y - (self._mascot_foot - 0.5) * mh    # place by real feet position
-        cx = g.drum_x + g.drum_d * 0.45                 # over the input drum
-        return [Sprite(cx, cy, mw, mh, f"pippidon_{state}_{frame}", (1, 1, 1, 1))]
+        feet_y = pf_top + g.pf_h * 0.15                 # feet at the lane top (matches lazer / 86.png)
+        x0 = g.drum_x - g.drum_d * 0.47                 # canvas left ≈ input-drum left edge
+        nat_w, nat_h = self._mascot_native.get(
+            state, self._mascot_native.get("idle", (1, 1)))
+        up_all = max(self._mascot_up.values()) if self._mascot_up else float(nat_h)
+        up_idle = self._mascot_up.get("idle", up_all)
+        # scale: as large as the lazer look wants (idle ~0.90× lane height), but
+        # capped so the TALLEST pose (arms-up clear) keeps a small top margin —
+        # guarantees no pose clips the top edge on any skin.
+        margin_top = 0.022 * self.h
+        s_fit = (feet_y - margin_top) / max(1.0, up_all)
+        s_look = (0.90 * g.pf_h) / max(1.0, up_idle)
+        s = min(s_fit, s_look)
+        w_px, h_px = nat_w * s, nat_h * s
+        cx = x0 + w_px / 2.0                            # bottom-LEFT corner -> centre
+        cy = feet_y - h_px / 2.0
+        return [Sprite(cx, cy, w_px, h_px, f"pippidon_{state}_{frame}", (1, 1, 1, 1))]
 
     def build_scene(self, t: int) -> SceneState:
         g = self.geo
