@@ -344,7 +344,9 @@ class TaikoSim:
         col = ["don" if notes[i].kind is TaikoType.DON else "kat"
                for i in range(n)]
         sres = [MISS] * n           # honest sweep result (hit vs MISS)
-        s_err = [1e9] * n           # sweep timing error (hit quality)
+        s_err = [1e9] * n           # sweep timing |error| (hit quality)
+        s_signed = [0.0] * n        # sweep SIGNED error (map-time) for UR/hit-bar
+        s_hit_t = [0] * n           # matched press time (jump-off / explosion)
         real_press = [False] * n    # judged by a genuine in-window press
         for want, presses in (("don", don_press), ("kat", kat_press)):
             seq = [i for i in order_t if col[i] == want]
@@ -360,6 +362,8 @@ class TaikoSim:
                 if -sweep_ok_w <= d <= sweep_ok_w:         # window covers press
                     sres[i] = GREAT if abs(d) <= sweep_great_w else OK
                     s_err[i] = abs(d)
+                    s_signed[i] = d
+                    s_hit_t[i] = int(p)
                     real_press[i] = True
                     ni += 1
                 # else: press earlier than this note's window — wasted (no steal)
@@ -417,7 +421,11 @@ class TaikoSim:
                 great_set.add(i)
         results: list[tuple[int, str]] = [(0, MISS)] * n
         for i in hit_idx:
-            results[i] = (old_hit_t[i], GREAT if i in great_set else OK)
+            # jump-off / explosion fires at the REAL matched press time (honest
+            # sweep). Falls back to the greedy-match time only for a
+            # reconcile-fabricated hit that had no genuine press.
+            ht = s_hit_t[i] if real_press[i] else old_hit_t[i]
+            results[i] = (ht, GREAT if i in great_set else OK)
         for i in range(n):
             if is_miss[i]:
                 results[i] = (int(notes[i].time_ms + ok_w), MISS)
@@ -425,13 +433,16 @@ class TaikoSim:
 
         order = sorted(range(len(results)), key=lambda i: results[i][0])
         self._rt = [results[i][0] for i in order]
-        # signed hit errors for the hit-error/UR bar: only notes with a genuine
-        # matched press (old_err<1e8) and a hit result — same set the shipped
-        # renderer drew.
+        # signed hit errors for the hit-error/UR bar: the HONEST per-key sweep
+        # offset (map-time) of every note judged by a genuine in-window press.
+        # The old source (greedy collapsed-edge match) matched only a fraction of
+        # the notes on dense same-colour streams and mis-paired the rest, so its
+        # error set was polluted and UR blew up (~490 vs the real ~130); the
+        # per-key sweep matches ~every pressed note with its true press error.
         self._hit_errors = sorted(
-            (results[i][0], old_hit_t[i] - notes[i].time_ms, results[i][1])
+            (results[i][0], s_signed[i], results[i][1])
             for i in range(n)
-            if results[i][1] != MISS and old_err[i] < 1e8)
+            if results[i][1] != MISS and real_press[i])
         self._he_times = [e[0] for e in self._hit_errors]
         self._he_csum = [0.0]
         self._he_csq = [0.0]
