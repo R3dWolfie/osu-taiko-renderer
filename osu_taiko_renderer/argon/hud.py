@@ -228,7 +228,7 @@ class ArgonHud:
         mods = mod_acronyms(int(getattr(self.meta, "mods", 0) or 0))
         if mods:
             my2 = ppy + int(lab_px * 1.2) + int(h * 0.03) + int(h * 0.012)
-            px = s_right
+            px = int(round(s_right))   # slice indices must be int (was float -> crash on modded plays)
             pill_px = max(12, int(h * 0.02))
             for ac in reversed(mods):
                 tex = self.bold.render(ac, pill_px, color=_WHITE)
