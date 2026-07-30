@@ -21,6 +21,8 @@ from pathlib import Path
 
 import numpy as np
 
+from osu_taiko_renderer.beatmap.models import TaikoType
+
 MISS = "miss"
 SAMPLE_RATE = 44100
 CHANNELS = 2
@@ -176,6 +178,38 @@ def _resolve_samples(o, beatmap, cache, dirs) -> list[tuple[np.ndarray, float]]:
     return out
 
 
+def _nearest_dist(sorted_times, t) -> float:
+    """|delta| to the nearest value in a time-sorted list (huge if empty)."""
+    if not sorted_times:
+        return 1e18
+    i = bisect.bisect_left(sorted_times, t)
+    best = 1e18
+    for k in (i - 1, i):
+        if 0 <= k < len(sorted_times):
+            best = min(best, abs(sorted_times[k] - t))
+    return best
+
+
+def _is_color(o, color: str) -> bool:
+    return (o.kind is TaikoType.DON) if color == "don" else (o.kind is TaikoType.KAT)
+
+
+def _tap_samples(type_name, beatmap, cache, dirs, t) -> list[tuple[np.ndarray, float]]:
+    """Empty drum-tap sample at press time `t`: a centre press plays the normal
+    hitnormal ('normal'), a rim press the hitclap ('clap') — osu!lazer
+    DrumSampleTriggerSource (Centre→HIT_NORMAL, Rim→HIT_CLAP). Bank / custom
+    index / volume come from the active sample (timing) point, like a note's own
+    normal sample."""
+    tp = _active_sample_point(getattr(beatmap, "sample_points", ()), t)
+    tp_set = tp.sample_set if tp else 0
+    tp_index = tp.custom_index if tp else 0
+    tp_volume = tp.volume if tp else 100
+    set_name = _SET_NAMES.get(tp_set) or (beatmap.default_sample_set or "normal")
+    gain = ((tp_volume or 100) / 100.0) * DEFAULT_HIT_GAIN
+    arr = _find(dirs, cache, _candidate_names(set_name, type_name, tp_index))
+    return [(arr, gain)] if arr is not None else []
+
+
 def _mix(track: np.ndarray, arr: np.ndarray, at_ms: float, gain: float):
     start = int(at_ms / 1000.0 * SAMPLE_RATE)
     if start < 0:
@@ -190,10 +224,17 @@ def build_taiko_hitsound_track(
     *, notes, note_hit, beatmap, sample_dirs, output_wav: Path,
     video_ms: float, start_ms: int, rate: float,
     miss_hitsound: bool = True,
+    press_edges: dict | None = None, ok_window_ms: float = 0.0,
 ) -> Path | None:
     """Build the stereo hitsound WAV at `output_wav`, aligned to the final video
     (a note at map time T lands at video time (T - start_ms)/rate). Returns the
-    path, or None if nothing was mixed."""
+    path, or None if nothing was mixed.
+
+    `press_edges` = {'don': [ms...], 'kat': [ms...]} rising-edge replay key
+    presses (from TaikoSim.drum_press_edges): every press that does NOT land on a
+    judged note gets a plain drum tap sample so empty taps click too (#100).
+    `ok_window_ms` is the hit window used to tell an on-note press (already
+    covered by that note's hitsound — no double-play) from an empty tap."""
     dirs = [Path(d) for d in sample_dirs if d and Path(d).is_dir()]
     if _FALLBACK_SKIN.is_dir() and _FALLBACK_SKIN not in dirs:
         dirs.append(_FALLBACK_SKIN)
@@ -216,6 +257,25 @@ def build_taiko_hitsound_track(
             if cb is not None and combo >= COMBO_BREAK_THRESHOLD:
                 _mix(track, cb, vt, COMBO_BREAK_GAIN)
             combo = 0
+
+    # Empty drum taps (#100): osu! plays a drum sample on EVERY key press, even
+    # one that lands on no note. For each replay press that did NOT judge a note
+    # (a press within ok_window_ms of a judged-hit note of its colour is already
+    # covered by that note's hitsound above — no double-play), add the plain drum
+    # tap: centre press -> hitnormal, rim press -> hitclap.
+    if press_edges:
+        for color, type_name in (("don", "normal"), ("kat", "clap")):
+            edges = press_edges.get(color) or ()
+            hit_times = sorted(
+                o.time_ms for o in notes
+                if _is_color(o, color) and note_hit.get(id(o), (0, MISS))[1] != MISS)
+            for p in edges:
+                if _nearest_dist(hit_times, p) <= ok_window_ms:
+                    continue                       # on-note press -> already voiced
+                for arr, gain in _tap_samples(type_name, beatmap, cache, dirs, p):
+                    _mix(track, arr, (p - start_ms) / rate, gain)
+                    placed += 1
+
     if placed == 0:
         return None
     np.clip(track, -1.0, 1.0, out=track)

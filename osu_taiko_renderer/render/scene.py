@@ -1135,6 +1135,16 @@ class TaikoSim:
         return tuple(bisect.bisect_right(self._zedges[z], t)
                      for z in ("rl", "cl", "cr", "rr"))
 
+    def drum_press_edges(self):
+        """Rising-edge replay key-press times (map ms) grouped by taiko colour:
+        centre keys (cl|cr) = 'don', rim keys (rl|rr) = 'kat'. Used by the
+        hitsound track so EVERY drum tap clicks — even a tap that lands on no
+        note (osu! plays the drum sample on every key press, #100)."""
+        return {
+            "don": sorted(self._zedges["cl"] + self._zedges["cr"]),
+            "kat": sorted(self._zedges["rl"] + self._zedges["rr"]),
+        }
+
     def drum_flashes(self, t: int):
         """Active input-drum press flashes: (is_rim, left, intensity 0..1) for
         each pressed quadrant, composited additively at the drum."""
