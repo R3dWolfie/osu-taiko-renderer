@@ -864,27 +864,58 @@ class TaikoSim:
             cprog = combo_portion / max_combo_portion if max_combo_portion else 1.0
             aprog = judged / n if n else 1.0
             raw.append(500000.0 * acc * cprog + 500000.0 * (acc ** 5) * aprog)
-        # Displayed score = the .osr's authoritative total, EXACTLY (Red
-        # 2026-07-30, #91). The standardised (ScoreV3) curve above only supplies
-        # the SHAPE of the climb; its endpoint is normalised to the replay's
-        # stored score so the gameplay HUD lands on the SAME number the results
-        # screen rolls to (lazer_results rolls to meta.score) and the render
-        # matches the .osr 1:1. (Reverts the ScoreV3×mod-multiplier scaling — it
-        # put a recomputed value on the HUD that disagreed with both the .osr and
-        # the results card, e.g. 697,801 shown for a 1,078,636 play. The
-        # mod-multiplier path survives only as a fallback for the rare replay with
-        # no stored score.)
+        # Keep the un-normalised curve (0..~1,000,000, mods NOT applied) — it is
+        # the SHAPE of the climb, re-scaled below and re-pinnable by render.py.
+        self._score_raw = list(raw)
+        _mm = mods_score_multiplier(int(getattr(self.meta, "mods", 0) or 0))
+        # Client-agnostic standardised endpoint: the live taiko ScoreProcessor
+        # total (default ComputeTotalScore, shared with std/mania) × the ScoreV3
+        # mod multiplier. This depends ONLY on the judged sequence, not on the
+        # .osr header, so score_fidelity uses it as the proximity guard that
+        # picks the right interpretation of the (source-ambiguous) header total.
+        self._std_sim_final = int(round(raw[-1] * _mm)) if raw else 0
+        # Default anchor: the .osr header total, EXACTLY (Red 2026-07-30, #91) —
+        # the safe fallback when score_fidelity is unavailable. render.py calls
+        # repin_score() to RE-anchor this curve to the lazer-standardised total
+        # (score_fidelity #155/#115) so the in-video counter shows ScoreV2, not a
+        # raw stable ScoreV1. lazer_results rolls to meta.score, which render.py
+        # swaps to the same standardised total, so HUD and results still agree.
         _m = self.meta
         if raw and _m is not None and getattr(_m, "score", 0) and raw[-1] > 0:
-            _k = _m.score / raw[-1]
-            self._scorev2 = [int(round(r * _k)) for r in raw]
-            self._scorev2[-1] = int(_m.score)           # endpoint EXACT (no fp drift)
+            self._scorev2 = self._rescale_curve(int(_m.score))
         elif raw:
             # No authoritative .osr score: standardised curve × new mod mult.
-            _mm = mods_score_multiplier(int(getattr(self.meta, "mods", 0) or 0))
             self._scorev2 = [int(round(r * _mm)) for r in raw]
         else:
+            self._score_raw = []
             self._scorev2 = [c[4] for c in self._cum]   # fallback: internal sum
+
+    def _rescale_curve(self, target: int) -> list:
+        """Re-scale the stored raw ScoreV3 curve so its endpoint is EXACTLY
+        `target`, preserving the climb's shape (endpoint set exactly to avoid fp
+        drift)."""
+        raw = self._score_raw
+        if not raw or raw[-1] <= 0:
+            return [int(target)] * len(raw) if raw else []
+        k = target / raw[-1]
+        out = [int(round(r * k)) for r in raw]
+        out[-1] = int(target)
+        return out
+
+    def repin_score(self, target: int) -> None:
+        """Re-anchor the in-video score curve to `target` (the authoritative
+        lazer-standardised total from score_fidelity). No-op without a raw curve
+        (the internal-sum fallback path). Also updates meta.score so any consumer
+        reading the sim's meta lands on the same number."""
+        target = int(target)
+        if getattr(self, "_score_raw", None):
+            self._scorev2 = self._rescale_curve(target)
+        try:                                            # meta is a frozen dataclass
+            import dataclasses as _dc
+            if self.meta is not None:
+                self.meta = _dc.replace(self.meta, score=target)
+        except Exception:  # noqa: BLE001 — meta swap is best-effort
+            pass
 
     def _state_at(self, t):
         i = bisect.bisect_right(self._rt, t) - 1

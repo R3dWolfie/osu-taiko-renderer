@@ -202,6 +202,49 @@ def render_core(
     # sim._final_stars over the rosu SR. No-op when --sr is absent.
     if getattr(cfg, "sr_override", None) is not None:
         sim._final_stars = float(cfg.sr_override)
+
+    # ── SCORE FIDELITY: one lazer-standardised scale everywhere (#155/#115) ──
+    # The .osr header total means different things per source (stable ScoreV1,
+    # osu-web legacy export of a lazer play = classic display total, lazer
+    # standardised). score_fidelity converts the header under every
+    # interpretation with lazer's own taiko math and picks the one consistent
+    # with our client-agnostic sim (sim._std_sim_final). The sim's ScoreV3 curve
+    # is then RE-PINNED so the in-video counter ENDS EXACTLY on that number, and
+    # meta.score is swapped so the results screen + leaderboard card show the
+    # same value. Result: a STABLE taiko play now shows ScoreV2 (~1M scale), not
+    # the raw ScoreV1 total (millions). The authoritative total is exported via a
+    # `<output>.mp4.score.json` sidecar (bot → renders.score_v3). Fail-soft: any
+    # problem leaves the header score displayed as before.
+    score_fid: dict | None = None
+    if osu_path is not None and getattr(meta, "score", 0):
+        try:
+            from osu_taiko_renderer.beatmap.score_fidelity import (
+                compute_candidates, resolve_authoritative)
+            from osu_taiko_renderer.render.scene import mods_score_multiplier
+            _mod_mult = mods_score_multiplier(int(getattr(meta, "mods", 0) or 0))
+            fid = compute_candidates(meta, bm, osu_path, _mod_mult)
+            _sim_final = int(getattr(sim, "_std_sim_final", 0) or 0)
+            val, src = resolve_authoritative(fid, _sim_final)
+            if val > 0:
+                sim.repin_score(int(val))
+                import dataclasses as _dc
+                meta = _dc.replace(meta, score=int(val))
+            fid.pop("legacy_attrs", None)
+            fid.pop("osu_facts", None)
+            fid.update({"score_v3": int(val), "source": src,
+                        "sim_final": _sim_final,
+                        "player": getattr(meta, "player_name", "")})
+            fid["players"] = [dict(fid)]
+            score_fid = fid
+            print(f"[taiko-renderer] score fidelity: header="
+                  f"{fid['header_score']:,} -> standardised {int(val):,} "
+                  f"(source={src}, sim_final={_sim_final:,})",
+                  file=sys.stderr, flush=True)
+        except Exception as _sf_e:  # noqa: BLE001 — never break a render
+            print(f"[taiko-renderer] score fidelity FAILED (header kept): "
+                  f"{_sf_e}", file=sys.stderr, flush=True)
+            score_fid = None
+
     # preempt = the first object's actual on-screen travel time (scroll_time is
     # the SV=1 base; real notes scroll faster, so the visible time is
     # scroll_time / scroll_vel). Using the raw scroll_time left ~5s of empty
@@ -508,6 +551,20 @@ def render_core(
         raise TaikoRenderError(f"ffmpeg exited {ret}\n{tail}")
     if not output_path.exists() or output_path.stat().st_size < 8_000:
         raise TaikoRenderError("output too small / missing — render likely failed")
+    # score-fidelity sidecar: `<output>.mp4.score.json` next to the mp4 — the bot
+    # (worker.py / cli/r3d_render.py) reads it into the completion marker so the
+    # DB/website card store/display the SAME standardised total the in-video
+    # counter ended on. Same filename + `score_v3` key the catch/mania engines
+    # emit. Best-effort: a failed sidecar never fails a completed render.
+    if score_fid is not None:
+        try:
+            import json as _json
+            sidecar = Path(str(output_path) + ".score.json")
+            sidecar.write_text(_json.dumps(
+                {"schema": 1, "mode": 1, **score_fid}, default=str))
+        except Exception as _sc_e:  # noqa: BLE001 — sidecar is best-effort
+            print(f"[taiko-renderer] score sidecar write failed: {_sc_e}",
+                  file=sys.stderr, flush=True)
     if progress_callback:
         progress_callback(100)
     return output_path
