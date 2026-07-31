@@ -1103,11 +1103,13 @@ class TaikoSim:
                              (1, 1, 1, 1)))
             sp.append(Sprite(g.target_x, bot_y - bar_h / 2.0, bar_w, bar_h, None,
                              (1, 1, 1, 1)))
-        # kiai glow at the hit target (TaikoPlayfield KiaiGlow), pulsing
-        if kp > 0.001:
-            gd = g.pf_h * 1.3
-            sp.append(Sprite(g.target_x, cy, gd, gd, "argon_note_flash",
-                             (1.0, 0.86, 0.55, kp * 1.25)))
+        # NO kiai glow at the hit target: in lazer Argon the KiaiGlow skin
+        # component resolves to Drawable.Empty() (TaikoArgonSkinTransformer has
+        # no KiaiGlow case, and TaikoPlayfield's SkinnableDrawable falls back to
+        # Empty()), so Argon draws nothing here. The per-note ArgonCirclePiece
+        # flash below (0.15 additive on each beat) is the ONLY kiai effect. A
+        # fabricated gold glow used to pulse here at 1.25x the flash over a
+        # 1.3x-lane disc -- that is what read "wayyyy brighter than in game".
 
         # --- bar lines (measure lines, scroll with notes; major brighter) ---
         blw = max(2, int(w * 0.0013))
