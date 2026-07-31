@@ -281,7 +281,7 @@ def build_textures(skin_dir=None) -> dict[str, np.ndarray]:
     ov = skin.load("taikohitcircleoverlay")
     bc = skin.load("taikobigcircle")
     bov = skin.load("taikobigcircleoverlay")
-    DON, KAT, GOLD = (235, 105, 85), (116, 177, 207), (252, 140, 70)  # lazer note colours
+    DON, KAT, GOLD = (235, 105, 85), (80, 148, 175), (252, 140, 70)  # lazer note colours (kat measured ~(78,146,174))
     # osu resolves a MISSING taikohitcircle to the DEFAULT skin's base circle,
     # NOT to a foreign-mode note. A skin that ships taikohitcircleoverlay but no
     # base (overlay-only, like osu_13811400) is still a legacy note: composite
