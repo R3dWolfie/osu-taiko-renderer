@@ -517,17 +517,36 @@ class TaikoSim:
         for _, e, _r in self._hit_errors:
             self._he_csum.append(self._he_csum[-1] + e)
             self._he_csq.append(self._he_csq[-1] + e * e)
+        # Health: lazer TaikoHealthProcessor (AccumulatingHealthProcessor(0.5)).
+        # Taiko HP ACCUMULATES from empty -> it starts at 0 and FILLS as notes
+        # are hit, reaching full partway through a clean play; it does NOT start
+        # full and drain like osu!std. Per-result base increase
+        # (TaikoJudgement.HealthIncreaseFor): GREAT=+3.0, OK=+1.1, MISS=-1.0,
+        # scaled by the drain-rate multipliers (ppy/osu TaikoHealthProcessor.cs):
+        #   hpMult     = 1 / (3 * hitCount * DifficultyRange(HP, .5, .75, .98))
+        #   hpMissMult = DifficultyRange(HP, .0018, .0075, .0120)
+        # hitCount = number of Hit notes = n. (Drumroll-tick / swell health is
+        # not modelled -- we only judge notes -- so the climb is a hair slower
+        # than lazer on roll-heavy maps, but the fill-from-empty shape a taiko
+        # player expects is exact.) Was: std-like start-full-and-drain, which a
+        # taiko player reads as wrong (bar pinned full from the first note).
+        _hit_count = max(1, n)
+        _hp_rate = float(getattr(self.bm, "hp", 5.0) or 5.0)
+        _hp_mult = 1.0 / (3.0 * _hit_count
+                          * _difficulty_range(_hp_rate, 0.5, 0.75, 0.98))
+        _hp_miss_mult = _difficulty_range(_hp_rate, 0.0018, 0.0075, 0.0120)
         combo = great = ok = miss = score = 0
-        hp = 1.0
+        hp = 0.0
         self._cum: list[tuple] = []
         for i in order:
             r = results[i][1]
             if r == GREAT:
-                great += 1; combo += 1; score += 300; hp = min(1.0, hp + 0.02)
+                great += 1; combo += 1; score += 300; hp += 3.0 * _hp_mult
             elif r == OK:
-                ok += 1; combo += 1; score += 100; hp = min(1.0, hp + 0.005)
+                ok += 1; combo += 1; score += 100; hp += 1.1 * _hp_mult
             else:
-                miss += 1; combo = 0; hp = max(0.0, hp - 0.05)
+                miss += 1; combo = 0; hp -= 1.0 * _hp_miss_mult
+            hp = min(1.0, max(0.0, hp))
             self._cum.append((combo, great, ok, miss, score, hp))
         # per-note results in TIME order (mascot lastObjectHit / clear triggers)
         self._res_ordered = [results[i][1] for i in order]
@@ -764,9 +783,11 @@ class TaikoSim:
             if end_v <= 0.02 and end_t < last_obj - 3000:
                 self.failed = True
                 self.fail_time_ms = end_t
-        # A genuine pass should never visibly "die"; floor the fallback model so a
-        # rough patch doesn't read as death when the player actually survived.
-        self._hp_floor = 0.0 if (self.failed or self._lb_t) else 0.15
+        # Taiko HP accumulates from empty (lazer AccumulatingHealthProcessor):
+        # the synthesized model legitimately starts at 0 and climbs, so there is
+        # no "false death" low patch to floor against (unlike the old std-like
+        # drain model). Keep 0 so the bar fills from empty exactly as in game.
+        self._hp_floor = 0.0
 
     def _hp_at(self, t, model_hp):
         """HP at map-time t: interpolate the life-bar graph when present, else the
