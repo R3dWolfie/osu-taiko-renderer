@@ -115,6 +115,49 @@ def _blit(rgb, src, x, y, anchor="tl"):
     rgb[y0:y1, x0:x1] = np.clip(region, 0, 255).astype(np.uint8)
 
 
+class _Roll:
+    """lazer RollingCounter tween: the DISPLAYED value chases the target over
+    ROLL_MS with an OutQuint ease, instead of snapping. Frame-rate independent
+    -- driven by the gameplay clock t (ms), not a per-frame step -- and, like
+    lazer's RollingCounter, restarts from the current interpolated value when
+    the target changes mid-roll. Snaps on the first frame / seek / rewind."""
+
+    def __init__(self, duration_ms=250.0):
+        self.dur = float(duration_ms)
+        self._from = 0.0
+        self._to = None
+        self._start = 0.0
+        self._disp = 0.0
+        self._last_t = None
+
+    def update(self, target, t):
+        target = float(target)
+        t = float(t)
+        # first frame / seek / rewind / big gap -> snap (no phantom roll)
+        if (self._last_t is None or t < self._last_t
+                or (t - self._last_t) > 1000.0):
+            self._disp = self._from = target
+            self._to = target
+            self._start = t
+            self._last_t = t
+            return self._disp
+        self._last_t = t
+        if self._to is None or target != self._to:   # new target -> new roll
+            self._from = self._disp
+            self._to = target
+            self._start = t
+        p = (t - self._start) / self.dur if self.dur > 0 else 1.0
+        if p >= 1.0:
+            self._disp = self._to
+        elif p <= 0.0:
+            self._disp = self._from
+        else:
+            q = 1.0 - p
+            e = 1.0 - q * q * q * q * q            # Easing.OutQuint
+            self._disp = self._from + (self._to - self._from) * e
+        return self._disp
+
+
 class ArgonHud:
     def __init__(self, resolution, meta, bm, first, last, sim, cfg=None):
         self.w, self.h = resolution
@@ -125,6 +168,10 @@ class ArgonHud:
         self.sim = sim
         self.cfg = cfg
         self.counter = ArgonCounter()
+        # lazer RollingCounter: displayed score/accuracy roll to the sim value
+        # over ~250ms (OutQuint) rather than snapping when a note lands.
+        self._roll_score = _Roll(250.0)
+        self._roll_acc = _Roll(250.0)
         self.bold = get_font("Bold")
         self.semi = get_font("SemiBold")
         from pathlib import Path
@@ -188,7 +235,8 @@ class ArgonHud:
         hp_h = self._hpbar.draw(rgb, w, h, scene.hp, _blit) if self._hpbar.present else 0
 
         # --- score: skin-positioned (MainHUDComponents.json) or top-RIGHT ---
-        sc = self._num(self._sfont, str(int(scene.score)), h * 0.056)
+        disp_score = self._roll_score.update(scene.score, t)
+        sc = self._num(self._sfont, str(int(disp_score)), h * 0.056)
         _sp = self.layout.place("score", sc.shape[1], sc.shape[0], w, h, mx, my)
         if _sp is not None:
             _sx, _sy = _sp
@@ -199,7 +247,8 @@ class ArgonHud:
             s_right, s_top = w - mx, my
 
         # --- accuracy (directly below the score block) ---
-        pct = max(0.0, min(100.0, scene.accuracy * 100.0))
+        disp_acc = self._roll_acc.update(scene.accuracy, t)
+        pct = max(0.0, min(100.0, disp_acc * 100.0))
         ah = h * 0.05
         ay = s_top + sc.shape[0] + int(h * 0.010)
         if self._sfont.present:
