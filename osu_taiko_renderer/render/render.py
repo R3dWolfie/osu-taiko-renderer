@@ -565,8 +565,19 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
         cmd += ["-vaapi_device", dev]
     cmd += ["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", str(cfg.fps),
             "-i", "pipe:0"]
+    # Resolve the music input + its live filter chain. With the loudnorm cache
+    # on, a hit feeds ffmpeg the pre-loudnorm'd PCM and drops loudnorm (+ the
+    # rate/trim baked into it) from the live chain; a miss builds the cache first;
+    # disabled/failure falls back to the source + the full inline chain. All
+    # three yield byte-identical muxed audio (loudnorm f64 -> pcm_f64le -> f64).
+    music_chain = None
     if audio is not None:
-        cmd += ["-i", str(audio)]
+        _pre, _post = _audio_parts(start_ms, rate, total_dur_s,
+                                   music_volume=cfg.music_volume,
+                                   general_volume=cfg.general_volume,
+                                   audio_offset_ms=cfg.audio_offset_ms, is_nc=is_nc)
+        audio_input, music_chain = _resolve_music_audio(audio, _pre, _post)
+        cmd += ["-i", str(audio_input)]
     if audio is not None and hitsound is not None:
         cmd += ["-i", str(hitsound)]
 
@@ -587,23 +598,19 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
         cmd += ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-crf", "20"]
 
     if audio is not None:
-        af = _audio_filter(start_ms, rate, total_dur_s,
-                           music_volume=cfg.music_volume,
-                           general_volume=cfg.general_volume,
-                           audio_offset_ms=cfg.audio_offset_ms, is_nc=is_nc)
         if hitsound is not None:
             # [1:a] song -> music chain; [2:a] hitsound dub scaled by the preset
             # effects (general) volume; amix without auto-normalise so neither
             # side is ducked. Video (input 0) mapped explicitly.
             hs_vol = max(0.0, cfg.general_volume / 100.0)
-            music_chain = af if af else "anull"
-            fc = ("[1:a]" + music_chain + "[m];"
+            mc = music_chain if music_chain else "anull"
+            fc = ("[1:a]" + mc + "[m];"
                   "[2:a]volume=" + f"{hs_vol:.3f}" + "[h];"
                   "[m][h]amix=inputs=2:duration=longest:normalize=0:"
                   "dropout_transition=0[aout]")
             cmd += ["-filter_complex", fc, "-map", "0:v", "-map", "[aout]"]
-        elif af:
-            cmd += ["-af", af]
+        elif music_chain:
+            cmd += ["-af", music_chain]
         cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
 
     # web-streamable: move the moov atom to the front so browsers/iOS can
@@ -619,12 +626,30 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
     return proc
 
 
-def _audio_filter(start_ms: int, rate: float = 1.0, total_dur_s: float | None = None,
-                  music_volume: int = 100, general_volume: int = 100,
-                  audio_offset_ms: int = 0, is_nc: bool = False) -> str:
-    """Speed the song to the mod rate (DT/HT), then align so video t=0 is
-    `start_ms` into the rate-adjusted song. Applies preset volume + offset."""
-    parts = []
+# Single-pass loudnorm baseline (EBU R128) applied to every render's music so
+# hot beatmap masters stop blasting. Kept as one constant so the loudnorm cache
+# key (which must capture everything determining the loudnorm OUTPUT) tracks any
+# change to it automatically.
+_LOUDNORM_FILTER = "loudnorm=I=-10:TP=-1.5:LRA=11"
+
+
+def _audio_parts(start_ms: int, rate: float = 1.0, total_dur_s: float | None = None,
+                 music_volume: int = 100, general_volume: int = 100,
+                 audio_offset_ms: int = 0, is_nc: bool = False) -> tuple[str, str]:
+    """Build the music audio chain SPLIT at loudnorm -> (pre, post).
+
+    pre  = rate/pitch (DT/HT atempo, NC resample), then align to `start_ms`
+           (atrim/adelay), then loudnorm. This is the OUTPUT-DETERMINING,
+           cacheable part: given the same source audio it is a pure function of
+           this string, so it is what the loudnorm cache is keyed on and bakes.
+    post = preset volume + apad (silence pad to the full video duration). These
+           depend on per-render config / video length, so they always run live
+           on top of the (possibly cached) loudnorm output.
+
+    Joining pre + "," + post reproduces the previous single -af chain
+    byte-for-byte (order: rate, trim, asetpts, loudnorm, volume, apad), so the
+    no-cache / kill-switch path is unchanged."""
+    pre = []
     if abs(rate - 1.0) > 1e-3:
         if is_nc:
             # Nightcore = a PURE RESAMPLE: speed AND pitch up together by the
@@ -634,37 +659,153 @@ def _audio_filter(start_ms: int, rate: float = 1.0, total_dur_s: float | None = 
             # audible smear vs in-game (reported distorted NC audio). Normalise to
             # 44100 first so a 48 kHz master still speeds by exactly `rate` — the
             # asetrate value is absolute, so the input rate must be known.
-            parts.append("aresample=44100")
-            parts.append(f"asetrate={int(round(44100 * rate))}")
-            parts.append("aresample=44100")
+            pre.append("aresample=44100")
+            pre.append(f"asetrate={int(round(44100 * rate))}")
+            pre.append("aresample=44100")
         else:
             # Plain DT/HT: pitch-PRESERVING time-stretch (that IS DT/HT).
-            parts.append(f"atempo={rate:.4f}")  # speed
+            pre.append(f"atempo={rate:.4f}")  # speed
     # start_ms is in MAP time; after the speed-up the song plays at map/rate, so the
     # real offset where video t=0 lands is start_ms/rate. audio_offset shifts the
     # song vs gameplay (negative = audio earlier).
     real_start = (start_ms - audio_offset_ms) / rate
     if real_start > 0:
-        parts.append(f"atrim=start={real_start / 1000:.3f}")
-        parts.append("asetpts=PTS-STARTPTS")
+        pre.append(f"atrim=start={real_start / 1000:.3f}")
+        pre.append("asetpts=PTS-STARTPTS")
     elif real_start < 0:
-        parts.append(f"adelay={int(-real_start)}:all=1")
+        pre.append(f"adelay={int(-real_start)}:all=1")
+    # Loudness-normalise to a consistent EBU R128 baseline (single-pass). loudnorm
+    # runs here (after the trim) so its output is exactly what the volume trim
+    # below is relative to. The cache boundary is right after this filter.
+    pre.append(_LOUDNORM_FILTER)
+    post = []
+    vol = (general_volume / 100.0) * (music_volume / 100.0)
+    if abs(vol - 1.0) > 1e-3:
+        post.append(f"volume={max(0.0, vol):.3f}")
     # Pad with silence so the audio spans the full video (incl. the results
     # outro past the song's end). Bound the pad to the exact video duration —
     # an UNBOUNDED apad races the (slow) raw-video pipe and overflows the
     # filtergraph buffer (ffmpeg reports it as ENOSPC and dies).
-    # Loudness-normalise to a consistent EBU R128 baseline (single-pass) so
-    # hot beatmap masters stop blasting: I=-14 LUFS, true-peak -1.5 dBTP.
-    # The volume trim below is applied AFTER, relative to this baseline.
-    parts.append("loudnorm=I=-10:TP=-1.5:LRA=11")
-    vol = (general_volume / 100.0) * (music_volume / 100.0)
-    if abs(vol - 1.0) > 1e-3:
-        parts.append(f"volume={max(0.0, vol):.3f}")
     if total_dur_s and total_dur_s > 0:
-        parts.append(f"apad=whole_dur={total_dur_s:.3f}")
+        post.append(f"apad=whole_dur={total_dur_s:.3f}")
     else:
-        parts.append("apad")
-    return ",".join(parts)
+        post.append("apad")
+    return ",".join(pre), ",".join(post)
+
+
+def _audio_filter(start_ms: int, rate: float = 1.0, total_dur_s: float | None = None,
+                  music_volume: int = 100, general_volume: int = 100,
+                  audio_offset_ms: int = 0, is_nc: bool = False) -> str:
+    """The full single-pass music chain (rate/trim/loudnorm/volume/apad) as one
+    -af string — the no-cache path. Byte-identical to the previous impl."""
+    pre, post = _audio_parts(start_ms, rate, total_dur_s,
+                             music_volume=music_volume, general_volume=general_volume,
+                             audio_offset_ms=audio_offset_ms, is_nc=is_nc)
+    return pre + "," + post if post else pre
+
+
+# --- loudnorm PCM cache -------------------------------------------------------
+# The loudnorm pass reruns every render (~2-3 s) even for the same map. Cache its
+# output PCM keyed on everything that determines it: the SOURCE audio bytes + the
+# exact `pre` chain (rate/pitch mode + start alignment + loudnorm params). Stored
+# as pcm_f64le WAV — loudnorm outputs f64 internally, so re-reading f64 and
+# running the downstream volume/apad/amix + AAC yields BYTE-IDENTICAL audio to
+# the inline chain (verified); f32/int would drift. Cache hit skips loudnorm.
+_LOUDNORM_CACHE_DIR = os.environ.get(
+    "R3D_TAIKO_LOUDNORM_CACHE_DIR", "/data/r3d/loudnorm-cache")
+
+
+def _loudnorm_cache_enabled() -> bool:
+    """Env kill-switch. R3D_TAIKO_LOUDNORM_CACHE=0 (or false/no/off) disables the
+    cache entirely, restoring the inline loudnorm path."""
+    return os.environ.get("R3D_TAIKO_LOUDNORM_CACHE", "1").strip().lower() \
+        not in ("0", "false", "no", "off")
+
+
+def _loudnorm_cache_key(audio_path: Path, pre: str) -> str:
+    """sha256 of the source audio bytes + the exact loudnorm-determining chain
+    (`pre`). Stable across re-downloads (hashes bytes, not mtime)."""
+    h = hashlib.sha256()
+    h.update(pre.encode("utf-8"))
+    h.update(b"\x00")
+    with open(audio_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _loudnorm_cache_valid(path: Path) -> bool:
+    """A present cache entry is complete (writes are atomic via os.replace), but
+    guard against truncation/corruption cheaply: RIFF/WAVE header + non-trivial
+    size. Invalid -> treated as a miss (recompute)."""
+    try:
+        if os.path.getsize(path) < 1024:
+            return False
+        with open(path, "rb") as f:
+            head = f.read(12)
+        return head[:4] == b"RIFF" and head[8:12] == b"WAVE"
+    except OSError:
+        return False
+
+
+def _build_loudnorm_cache(source: Path, pre: str, cache_path: Path) -> bool:
+    """Run the `pre` chain (rate/pitch, trim, loudnorm) on `source` and write the
+    result to `cache_path` as pcm_f64le WAV, atomically (temp + os.replace).
+    Returns True on success; False (fail-soft) -> caller falls back to inline
+    loudnorm."""
+    import tempfile
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".ln_", suffix=".wav",
+                                   dir=str(cache_path.parent))
+        os.close(fd)
+    except OSError as e:
+        print(f"[taiko-renderer] loudnorm cache dir unusable ({e}); inline loudnorm",
+              file=sys.stderr)
+        return False
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(source), "-af", pre, "-c:a", "pcm_f64le", "-f", "wav", tmp],
+            check=True, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if os.path.getsize(tmp) < 1024:
+            raise RuntimeError("empty loudnorm output")
+        os.replace(tmp, cache_path)
+        return True
+    except Exception as e:  # noqa: BLE001 — never let caching break a render
+        print(f"[taiko-renderer] loudnorm cache build failed ({e}); inline loudnorm",
+              file=sys.stderr)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def _resolve_music_audio(audio: Path, pre: str, post: str):
+    """Resolve the music input + its live filter chain, using the loudnorm cache
+    when enabled. Returns (audio_input, music_chain):
+      * cache hit  -> (cache_wav, post)         loudnorm SKIPPED (baked in cache)
+      * cache miss -> build cache, then as hit; on any failure fall back to
+      * disabled / fallback -> (source, pre+','+post)   inline loudnorm
+
+    music_chain is what runs live on the resolved input (post-only when the
+    cache supplies the loudnorm'd PCM, else the full chain)."""
+    full = pre + "," + post if post else pre
+    if not _loudnorm_cache_enabled():
+        return audio, full
+    try:
+        key = _loudnorm_cache_key(audio, pre)
+    except OSError as e:
+        print(f"[taiko-renderer] loudnorm cache key failed ({e}); inline loudnorm",
+              file=sys.stderr)
+        return audio, full
+    cache_path = Path(_LOUDNORM_CACHE_DIR) / f"{key}.wav"
+    if not _loudnorm_cache_valid(cache_path):
+        if not _build_loudnorm_cache(audio, pre, cache_path):
+            return audio, full
+    return cache_path, (post if post else "anull")
 
 
 def _bg_cover(path: Path, w: int, h: int, blur: int = 0) -> "np.ndarray":
