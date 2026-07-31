@@ -169,12 +169,18 @@ def _resolve_samples(o, beatmap, cache, dirs) -> list[tuple[np.ndarray, float]]:
         arr = _find(dirs, cache, [fn])
         if arr is not None:
             return [(arr, gain)]
-    arr = _find(dirs, cache, _candidate_names(set_name, "normal", eff_index))
-    if arr is not None:
-        out.append((arr, gain))
+    hbits = getattr(o, "hit_sound", 0) or 0
+    # osu!taiko: a note plays ONE drum sound = its colour. A CENTRE (don) plays
+    # the NORMAL sample; a RIM (kat) plays ONLY its whistle/clap addition. The
+    # previous code always added the normal, so every kat voiced don+kat (the
+    # doubled blue-note hitsound the tester heard). Skip the normal for kats.
+    is_kat = o.kind is TaikoType.KAT
+    if not is_kat:
+        arr = _find(dirs, cache, _candidate_names(set_name, "normal", eff_index))
+        if arr is not None:
+            out.append((arr, gain))
     add_set = (hs.addition_set if hs and hs.addition_set else eff_set)
     add_name = _SET_NAMES.get(add_set) or set_name
-    hbits = getattr(o, "hit_sound", 0) or 0
     for bit, tname in _ADDITIONS:
         if hbits & bit:
             arr = _find(dirs, cache, _candidate_names(add_name, tname, eff_index))
