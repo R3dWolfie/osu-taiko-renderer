@@ -16,6 +16,8 @@ from __future__ import annotations
 import bisect
 import math
 
+import numpy as np
+
 from osu_taiko_renderer.argon import _const as AC
 from osu_taiko_renderer.argon import geometry as ag_geom
 from osu_taiko_renderer.render.dim import build_dim_envelope
@@ -29,6 +31,23 @@ from osu_taiko_renderer.beatmap.models import (
 from osu_taiko_renderer.beatmap.replay import hit_events
 
 GREAT, OK, MISS = "great", "ok", "miss"
+
+
+def _content_fill(arr, thr=20) -> float:
+    """Opaque-content fraction of an RGBA sprite: max(content_w, content_h) over
+    the canvas's larger side. Skins pad the spinner-circle (or ship a small
+    graphic) in a big transparent canvas, so drawing the whole canvas at a target
+    diameter renders the visible disc far too small. The denden divides its draw
+    size by this so the CONTENT fills the target. Returns 1.0 when unknown."""
+    if arr is None or arr.ndim != 3 or arr.shape[2] < 4:
+        return 1.0
+    ys, xs = np.where(arr[..., 3] > thr)
+    if len(xs) == 0:
+        return 1.0
+    cw = xs.max() - xs.min() + 1
+    ch = ys.max() - ys.min() + 1
+    frac = max(cw, ch) / max(arr.shape[0], arr.shape[1])
+    return float(min(1.0, max(0.05, frac)))
 
 # Always render the judge’s HONEST judgments instead of fabricating misses to
 # match the .osr header miss total / max_combo (Red 2026-07-27, #25). Flip to
@@ -170,6 +189,11 @@ class TaikoSim:
         self.sk_roll = self.skin.has("taiko-roll-middle")
         self.sk_lane = self.skin.has("taiko-bar-right")
         self.sk_swell = self.skin.has("spinner-circle")   # legacy denden art
+        # spinner-circle opaque-content fraction: skins commonly pad the disc in
+        # a large transparent canvas (or ship a small graphic), so the denden
+        # scales the sprite up by 1/fill to make the visible disc FILL the denden
+        # instead of drawing as a tiny speck inside the approach ring.
+        self._swell_fill = _content_fill(self.skin.load("spinner-circle"))
         # taiko-roll-end native aspect (w/h) so the drumroll end cap keeps its
         # true shape (a 64x128 semicircle must NOT be stretched to a square).
         _re = self.skin.load("taiko-roll-end")
@@ -1200,7 +1224,11 @@ class TaikoSim:
                         app = (0.8 + (1.488 - 0.8) * (1.0 - tprog)) * base * body_scale
                         sp.append(Sprite(sx, cy, app, app, "skin_spinner_approach",
                                          (1, 1, 1, 0.8 * body_alpha)))
-                    cd = (0.8 + 0.14 * completion) * base * body_scale
+                    # spinner-circle grows 0.8x -> 0.94x with mash progress. Draw
+                    # size is divided by the sprite's opaque-content fraction so
+                    # the visible disc FILLS the denden (padded/small-graphic
+                    # spinner-circles no longer render as a tiny central speck).
+                    cd = (0.8 + 0.14 * completion) * base * body_scale / self._swell_fill
                     cs = Sprite(sx, cy, cd, cd, "skin_spinner_circle",
                                 (1, 1, 1, body_alpha))
                     cs.rotation = math.radians(completion * 360.0 * 3.0)
