@@ -207,6 +207,11 @@ class RenderConfig:
     # FEATURED results-card avatar: the current player's REAL osu! avatar PNG
     # (service passes it). None -> the engine draws the procedural username chip.
     featured_avatar_png: Path | None = None
+    # PER-FRAME score sidecar (task #135, live overlay): when set, write a JSON
+    # array of per-gameplay-frame samples {t_ms, score, combo, acc} to this path
+    # so mania_ordr's taiko overlay compositor can draw live score/combo/acc on
+    # the lanes. None (default) -> not written; normal renders are unaffected.
+    score_json_path: Path | None = None
 
 
 @dataclass

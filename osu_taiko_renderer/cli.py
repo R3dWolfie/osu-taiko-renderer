@@ -88,6 +88,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="PNG of the FEATURED player's REAL osu! avatar for the "
                          "results CENTRE card (service passes the player's osu! "
                          "pfp). Absent -> the procedural username chip.")
+    ap.add_argument("--score-json", type=Path, default=None,
+                    help="write a per-gameplay-frame score sidecar (JSON array "
+                         "of {t_ms,score,combo,acc}) to this path for the live "
+                         "overlay compositor (#135). Omit -> not written.")
     # Accept-and-ignore: lets the shared render pipeline pass mode-agnostic
     # flags it also sends to the catch renderer without erroring here.
     args, _unknown = ap.parse_known_args(argv)
@@ -128,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         leaderboard_source=args.leaderboard_source,
         leaderboard_json=args.leaderboard_json,
         featured_avatar_png=args.featured_avatar_png,
+        score_json_path=args.score_json,
     )
     if args.results_seconds is not None:
         cfg.results_ms = int(args.results_seconds * 1000)

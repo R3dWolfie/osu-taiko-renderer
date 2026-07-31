@@ -461,6 +461,12 @@ def render_core(
     _t_render0 = time.monotonic()
     writer = _FrameWriter(proc)
     pending = deque()   # (scene, exps, judges, drum_flashes) awaiting pixels
+    # Per-frame score sidecar (#135, live overlay): one sample per GAMEPLAY frame
+    # {t_ms (gameplay/map ms), score (ScoreV2), combo, acc 0..1}, read straight
+    # off the re-pinned sim scene. Collected here, written after a successful
+    # render. None -> feature disabled (no overhead on normal renders).
+    _score_samples: list | None = (
+        [] if getattr(cfg, "score_json_path", None) else None)
 
     def _emit_gameplay(raw):
         nonlocal last_gameplay
@@ -483,6 +489,13 @@ def render_core(
                 if i < gameplay_frames:
                     t = int(start_ms + i * map_step)
                     scene = sim.build_scene(t)
+                    if _score_samples is not None:
+                        _score_samples.append({
+                            "t_ms": int(t),
+                            "score": int(scene.score),
+                            "combo": int(scene.combo),
+                            "acc": round(float(scene.accuracy), 6),
+                        })
                     renderer.begin()
                     renderer.draw(scene.sprites)
                     exps, judges = sim.active_effects(t)
@@ -564,6 +577,19 @@ def render_core(
                 {"schema": 1, "mode": 1, **score_fid}, default=str))
         except Exception as _sc_e:  # noqa: BLE001 — sidecar is best-effort
             print(f"[taiko-renderer] score sidecar write failed: {_sc_e}",
+                  file=sys.stderr, flush=True)
+    # per-frame score.json for the live overlay compositor (#135) — best-effort.
+    if _score_samples is not None:
+        try:
+            import json as _json
+            _sjp = Path(cfg.score_json_path)
+            if _sjp.parent and not _sjp.parent.exists():
+                _sjp.parent.mkdir(parents=True, exist_ok=True)
+            _sjp.write_text(_json.dumps(_score_samples, separators=(",", ":")))
+            print(f"[taiko-renderer] wrote {len(_score_samples)} score.json "
+                  f"samples -> {_sjp}", file=sys.stderr, flush=True)
+        except Exception as _sj_e:  # noqa: BLE001 — never fail a done render
+            print(f"[taiko-renderer] score.json write failed: {_sj_e}",
                   file=sys.stderr, flush=True)
     if progress_callback:
         progress_callback(100)
