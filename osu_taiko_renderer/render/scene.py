@@ -1268,23 +1268,19 @@ class TaikoSim:
             if o.big:
                 key = key + "_big"          # skin taikobigcircle (or scaled note)
             if res != MISS and t >= rt:
-                # hit: gravity "jump off" (DrawableHit, SnapJudgementLocation
-                # off) — the note KEEPS scrolling left while it arcs up 200u
-                # (OutQuad 300ms) then falls 400u (InQuad), scale→0.8, fade 800ms.
+                # hit: the note does NOT fly up over the drum/mascot. The old
+                # gravity "jump-off" (rise -pf_h, proxied in front of the left
+                # stage, keep scrolling left) put a note up over the mascot every
+                # hit -- reported as the "blue kat click placed wrong". Real lazer
+                # #144 shows NO note flying over the mascot: on a hit the note
+                # fades at the hit target while the hit explosion carries the
+                # feedback (lazer DrawableHit with Hit-animations off / stable
+                # behaviour: FadeOut, no gravity, no ProxyContent). Match that.
                 age = t - rt
-                if age > 800:
+                if age > 100:
                     continue
-                nx, _ = self._x_at(o.time_ms, o.scroll_vel, t)   # continues left
-                if age <= 300:
-                    yoff = -(1.0 - (1.0 - age / 300.0) ** 2) * g.pf_h     # up, OutQuad
-                else:
-                    q = (age - 300.0) / 600.0
-                    yoff = (-1.0 + (q * q) * 2.0) * g.pf_h                # fall, InQuad
-                scale = 1.0 - 0.2 * min(1.0, age / 600.0)
-                a = max(0.0, 1.0 - age / 800.0)
-                ny, dd = cy + yoff, d * scale
-                # (ArgonCirclePiece has no glow layer — note is core+rings+icon)
-                sp.append(Sprite(nx, ny, dd, dd, key, (1, 1, 1, a)))
+                a = max(0.0, 1.0 - age / 100.0)     # quick fade at the target
+                sp.append(Sprite(g.target_x, cy, d, d, key, (1, 1, 1, a)))
                 continue
             x, p = self._x_at(o.time_ms, o.scroll_vel, t)
             if p > 1.1:
