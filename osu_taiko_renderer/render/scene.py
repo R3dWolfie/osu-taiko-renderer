@@ -200,20 +200,22 @@ class TaikoSim:
         self._roll_end_aspect = (_re.shape[1] / _re.shape[0]) if _re is not None else 0.5
 
         # --- legacy note SIZE (osu!stable vs Argon) ---------------------------
-        # osu! legacy taiko draws the hit circle at its authored pixel size on the
-        # 200px playfield reference (TaikoPlayfield.BASE_HEIGHT): the standard
-        # 128px taikohitcircle => note Ø = 128/200 = 0.64 * playfield_height.
-        # Argon/lazer instead normalise the legacy circle to DrawHeight/128 =
-        # DEFAULT_SIZE(0.475) * playfield_height, which is why lazer taiko notes
-        # read visibly SMALLER than stable. For a legacy note skin, size to the
-        # stable ratio (normal + big/finisher); a pure-Argon render keeps geometry.
+        # osu!stable draws EVERY legacy taikohitcircle at a FIXED on-screen size:
+        # whatever sprite the skin ships (128px, an @2x/256px, a 450px circle, ...)
+        # is rescaled to the same 128px logical circle on the 200px playfield
+        # reference (TaikoPlayfield.BASE_HEIGHT). So a normal note is a CONSTANT
+        # Ø = 128/200 = 0.64 * playfield_height REGARDLESS of the source sprite's
+        # pixel dimensions (the sprite is scaled to fill note_d downstream).
+        # Sizing by the sprite's own height (an earlier build did `_ch/200 * pf_h`)
+        # blew large-circle / @2x skins up past the lane height -> overlapping
+        # "bignotes". Argon/lazer instead normalise to DEFAULT_SIZE(0.475), which
+        # reads visibly SMALLER than stable -> use the stable 0.64 ratio for a
+        # legacy note skin (normal + big/finisher); a pure-Argon render keeps its
+        # own geometry.
         self.sk_note = (self.skin.has("taikohitcircle")
                         or self.skin.has("taikohitcircleoverlay"))
         if self.sk_note:
-            _ch = (self.skin.logical_height("taikohitcircle")
-                   or self.skin.logical_height("taikohitcircleoverlay")
-                   or 128.0)
-            self.note_d = (_ch / AC.BASE_HEIGHT) * self.geo.pf_h
+            self.note_d = AC.STABLE_SIZE * self.geo.pf_h
             self.big_d = self.note_d * AC.STRONG_SCALE
         else:
             self.note_d = self.geo.note_d

@@ -10,6 +10,10 @@ from __future__ import annotations
 BASE_HEIGHT = 200.0                 # TaikoPlayfield.BASE_HEIGHT
 REF_SCREEN_H = 768.0                # lazer reference height for relative scaling
 DEFAULT_SIZE = 0.475                # TaikoHitObject.DEFAULT_SIZE (note Ø / playfield_H)
+STABLE_SIZE = 128.0 / 200.0        # osu!stable legacy note Ø / playfield_H (=0.64): the
+                                   # FIXED on-screen size stable rescales every legacy
+                                   # taikohitcircle to (128px on the 200px reference),
+                                   # independent of the source sprite's pixel dimensions.
 STRONG_SCALE = 1.0 / 0.65          # TaikoStrongableHitObject.STRONG_SCALE (big note)
 DEFAULT_STRONG_SIZE = DEFAULT_SIZE * STRONG_SCALE
 INPUT_DRUM_WIDTH = 180.0           # TaikoPlayfield.INPUT_DRUM_WIDTH (local units)
