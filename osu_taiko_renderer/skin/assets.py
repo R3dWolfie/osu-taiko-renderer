@@ -42,6 +42,25 @@ def _note_rim() -> np.ndarray:
     return np.array(img)
 
 
+def _default_hitcircle_base(n: int = 128) -> np.ndarray:
+    """osu!'s DEFAULT legacy taikohitcircle: a plain filled white disc. It is
+    multiply-tinted to the don/kat/drumroll colour, with taikohitcircleoverlay
+    composited on top (see compose_skin_note). Used as the base when a user skin
+    ships an overlay but no base circle — osu's user->default element resolution
+    (rather than dropping to a full Argon note). Supersampled for a clean edge;
+    128px matches the common overlay size so the overlay maps ~1:1."""
+    ss = 4
+    N = n * ss
+    m = 2 * ss                          # tiny margin so the disc isn't clipped
+    img = Image.new("L", (N, N), 0)
+    ImageDraw.Draw(img).ellipse([m, m, N - 1 - m, N - 1 - m], fill=255)
+    alpha = np.asarray(img.resize((n, n), Image.LANCZOS), dtype=np.uint8)
+    out = np.zeros((n, n, 4), dtype=np.uint8)
+    out[..., :3] = 255
+    out[..., 3] = alpha
+    return out
+
+
 def _drum() -> np.ndarray:
     """The left hit-target: a faintly-filled disc with one crisp ring.
 
@@ -246,6 +265,16 @@ def build_textures(skin_dir=None) -> dict[str, np.ndarray]:
     bc = skin.load("taikobigcircle")
     bov = skin.load("taikobigcircleoverlay")
     DON, KAT, GOLD = (235, 105, 85), (116, 177, 207), (252, 140, 70)  # lazer note colours
+    # osu resolves a MISSING taikohitcircle to the DEFAULT skin's base circle,
+    # NOT to a foreign-mode note. A skin that ships taikohitcircleoverlay but no
+    # base (overlay-only, like osu_13811400) is still a legacy note: composite
+    # the skin's overlay onto a default legacy base disc instead of falling back
+    # to a full Argon note. A present-but-blank overlay is already resolved to
+    # its -0 animation frame by TaikoSkin.find (osu -0-blanks-static rule).
+    if hc is None and ov is not None:
+        hc = _default_hitcircle_base()
+    if bc is None and bov is not None:
+        bc = _default_hitcircle_base()
     if hc is not None:
         tex["argon_don"] = AT.compose_skin_note(hc, ov, DON)
         tex["argon_kat"] = AT.compose_skin_note(hc, ov, KAT)

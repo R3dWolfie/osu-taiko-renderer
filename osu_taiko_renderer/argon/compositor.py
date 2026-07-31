@@ -204,10 +204,14 @@ class ArgonEffects:
             img = skin.load(name)
             if img is not None:
                 self._skin_judge[res] = img
-        # Honour the skin's judgement graphics whenever it ships ANY of them,
-        # not just a plain GREAT — skins deliberately omit taiko-hit300 so a
-        # normal GREAT shows nothing (e.g. "+39 nofinish"). Per-result absence
-        # is handled as "no popup" in _judge_tex, not an Argon text fallback.
+        # A skin that ships ANY taiko-hit judgement sprite is a LEGACY skin: its
+        # hit explosion is the LegacyHitExplosion (that sprite bursting at the
+        # target), so the Argon accent glow / hit-target flash is NOT drawn on
+        # top (see composite()). Per-result resolution is now per element in
+        # _judge_tex: a result the skin SHIPS uses its sprite (a blank/transparent
+        # sprite = intentionally invisible, e.g. taiko-hit300 blanked for "no 300
+        # popup"); a result the skin OMITS falls back to Argon text (osu's
+        # user->default chain — we have no bundled legacy default skin).
         self._use_skin_judge = bool(self._skin_judge)
         # Legacy-lane hit-target flash (issue #118): a skin shipping taiko-bar-right
         # draws its OWN (opaque, dark) hit target, so the Argon per-hit explosion —
@@ -253,26 +257,27 @@ class ArgonEffects:
                 self._drum_scaled[(is_rim, left)] = _prebake_add(im8)
 
     def _judge_tex(self, result, big=False):
-        # Big/strong notes prefer the geki/kiai sprite (taiko-hit300g / -100k)
-        # when the skin ships it, else fall back to the normal result sprite.
-        if self._use_skin_judge and big and (result + "_big") in self._skin_judge:
-            key = result + "_big"
+        """(tex, is_skin) for a judgement result. Per-element osu resolution:
+        the USER skin's sprite when it ships one for this result — including a
+        blank/transparent sprite, which renders as nothing downstream (the skin
+        intentionally hides that judgement, e.g. taiko-hit300 blanked for a
+        "no 300 popup" look) — else the Argon text fallback (osu's user->default
+        chain; no bundled legacy default, so Argon is the default). Big/geki
+        notes prefer the *g/*k variant (taiko-hit300g / -100k), falling back to
+        the normal-note sprite, then to Argon text."""
+        if big and (result + "_big") in self._skin_judge:
+            key, is_skin = result + "_big", True
+        elif result in self._skin_judge:
+            key, is_skin = result, True
         else:
-            key = result
+            key, is_skin = "argon_" + result, False
         if key not in self._jcache:
-            if self._use_skin_judge:
-                # Skin mode: the skin's sprite for this key, or None (no popup)
-                # when the skin omits it — e.g. no taiko-hit300 => a normal GREAT
-                # shows nothing ("+39 nofinish"). A fully transparent sprite also
-                # renders nothing downstream.
-                img = self._skin_judge.get(key)
-                if img is None:
-                    self._jcache[key] = None
-                else:
-                    th = int(self.geo.note_d * 1.1)
-                    tw = max(1, int(th * img.shape[1] / img.shape[0]))
-                    self._jcache[key] = np.array(
-                        Image.fromarray(img).resize((tw, th), Image.LANCZOS))
+            if is_skin:
+                img = self._skin_judge[key]
+                th = int(self.geo.note_d * 1.1)
+                tw = max(1, int(th * img.shape[1] / img.shape[0]))
+                self._jcache[key] = np.array(
+                    Image.fromarray(img).resize((tw, th), Image.LANCZOS))
             else:
                 # ArgonJudgementPiece: plain straight-alpha OsuFont text, no glow
                 # halo (the only burst is the separate RingExplosion).
@@ -280,7 +285,7 @@ class ArgonEffects:
                 self._jcache[key] = self.font.render(
                     _JUDGE_TEXT[result], px, color=_JUDGE_COL[result],
                     spacing=C.JUDGE_SPACING * self.geo.scale)
-        return self._jcache[key]
+        return self._jcache[key], is_skin
 
     @staticmethod
     def _legacy_explosion_anim(age):
@@ -354,8 +359,14 @@ class ArgonEffects:
         for is_rim, left, a in drums:
             _add_prescaled(rgb, self._drum_scaled[(is_rim, left)],
                            g.drum_x, g.center_y, a)
-        # hit explosions at the target (additive)
-        for is_rim, age, big, res in exps:
+        # hit explosions at the target (additive). A LEGACY skin (ships its own
+        # taiko-hit300/100/0 sprites) uses those AS the hit explosion
+        # (LegacyHitExplosion, drawn in the judges loop below); lazer does NOT
+        # also draw the Argon accent glow / hit-target flash on top. Forcing them
+        # was the "light on every click" a skin that blanked its explosion (blank
+        # taiko-hit300 / taiko-glow) did not want. Skip the Argon explosion
+        # entirely when the skin supplies legacy judgement sprites.
+        for is_rim, age, big, res in (() if self._use_skin_judge else exps):
             if res == "great":
                 if age < C.EXPLOSION_GREAT_IN_MS:
                     a = age / C.EXPLOSION_GREAT_IN_MS
@@ -383,15 +394,17 @@ class ArgonEffects:
         #   * ARGON → ArgonJudgementPiece: GREAT/OK text rises off the target and
         #     fades, with the RingExplosion burst.
         for res, age, rt, big in judges:
-            tex = self._judge_tex(res, big)
-            if tex is None:                 # skin mode, no sprite for this result
+            tex, is_skin = self._judge_tex(res, big)
+            if tex is None:
                 continue
             h0, w0 = tex.shape[0], tex.shape[1]
-            if self._use_skin_judge:
+            if is_skin:
+                # LegacyHitExplosion: the skin's taiko-hit sprite BURSTS at the
+                # hit target (no upward float). A blank/transparent sprite blits
+                # to nothing — the skin's intentionally-hidden judgement.
                 scale, alpha = self._legacy_explosion_anim(age)
                 if alpha <= 0.01:
                     continue
-                # straight alpha, centred ON the hit target (no upward float).
                 _blit_straight(rgb, tex, g.target_x, g.center_y,
                                w0 * scale, h0 * scale, alpha)
                 continue
