@@ -53,6 +53,8 @@ def parse_beatmap(path: Path, *, mods: int = 0, lazer: bool = False) -> TaikoBea
     hr = bool(mods & (1 << 4))
     if ez:
         od *= 0.5; hp *= 0.5
+        # TaikoModEasy (lazer) only halves OD/HP(/CS/AR) — it does NOT touch
+        # SliderMultiplier, so EZ leaves taiko scroll velocity unchanged.
     if hr:
         od = min(10.0, od * 1.4); hp = min(10.0, hp * 1.4)
     # Object times stay on the map-time axis (replay frames share it); rate only
@@ -62,7 +64,17 @@ def parse_beatmap(path: Path, *, mods: int = 0, lazer: bool = False) -> TaikoBea
     rate = 1.5 if dt else (0.75 if ht else 1.0)
 
     timing = _parse_timing(sections.get("TimingPoints", ""))
-    timing.slider_mult = slider_mult        # lazer Velocity = SliderMultiplier
+    # SliderMultiplier IS lazer's taiko Velocity — it drives the scroll speed
+    # (scroll_mult below). HardRock multiplies it ON TOP of the map value:
+    # TaikoModHardRock.ApplyToDifficulty does `SliderMultiplier *= 1.4 * 4/3`
+    # (=1.86667) in addition to the base OD/HP*1.4, so HR notes scroll ~1.87x
+    # faster/wider than nomod. lazer applies difficulty mods AFTER the
+    # beatmap->taiko conversion, so this bump affects ONLY the scroll velocity;
+    # the slider->object conversion below keeps the ORIGINAL `slider_mult`
+    # (passed to _parse_hit_objects unchanged). This is a SEPARATE factor from
+    # the hidden _VELOCITY_MULTIPLIER=1.4 conversion constant — HR stacks on top.
+    scroll_slider_mult = slider_mult * (1.4 * 4.0 / 3.0) if hr else slider_mult
+    timing.slider_mult = scroll_slider_mult
     objects = _parse_hit_objects(
         sections.get("HitObjects", ""),
         timing=timing, slider_mult=slider_mult, od=od,
