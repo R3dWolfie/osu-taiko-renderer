@@ -11,6 +11,7 @@ note (finish) is hit by pressing both centre or both rim keys at once.
 """
 from __future__ import annotations
 
+import json
 import lzma
 import struct
 from pathlib import Path
@@ -22,6 +23,12 @@ from osu_taiko_renderer.beatmap.models import ReplayMeta, TaikoFrame
 _SEED_DELTA = -12345
 _DON_BITS = 1 | 4   # M1, K1 (centre)
 _KAT_BITS = 2 | 8   # M2, K2 (rim)
+
+# Cutoff between stable's date-based game_version (~20251128, 8 digits) and
+# lazer's identifier-style version (~30000016, 9 digits). At/above this is a
+# lazer-format replay; below is stable. (Mirrors mania_ordr's
+# LAZER_GAME_VERSION_BOUNDARY and osu-taiko's scene.LAZER_GAME_VERSION.)
+LAZER_GAME_VERSION = 30_000_000
 
 
 class ReplayParseError(RuntimeError):
@@ -109,6 +116,97 @@ def _recover_leadin_offset(path: Path) -> int:
         return 0
 
 
+def _uleb128(buf: bytes, pos: int) -> tuple[int, int]:
+    val = shift = 0
+    while True:
+        b = buf[pos]
+        pos += 1
+        val |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return val, pos
+        shift += 7
+
+
+def _skip_osr_string(buf: bytes, pos: int) -> int:
+    marker = buf[pos]
+    pos += 1
+    if marker == 0x00:
+        return pos
+    if marker != 0x0b:
+        raise ValueError(f"unknown string marker {marker:#x}")
+    length, pos = _uleb128(buf, pos)
+    return pos + length
+
+
+def _detect_classic(path: Path, game_version: int) -> bool:
+    """True when a lazer-format .osr carries the Classic mod (CL).
+
+    Lazer appends an LZMA-compressed ScoreInfo JSON blob after the legacy
+    replay body (even for Classic-mod plays, so stable-format scores round-trip
+    through lazer losslessly). Its ``mods`` field is a list of
+    ``{"acronym": "..."}`` dicts; CL marks a stable-mechanics / stable-origin
+    play. The legacy ``mods`` int can't encode CL, so this blob is the only
+    place it survives. Self-contained parse (mirrors
+    mania_ordr.lazer_extension.parse_lazer_score_info) so osu-taiko stays a
+    standalone package. Fail-soft: any problem -> False (treat as not-classic;
+    the caller then leans on game_version, defaulting ambiguous to stable).
+
+    Only meaningful for lazer-format replays; stable .osr files have no trailing
+    blob, so we skip the walk entirely below the lazer version boundary.
+    """
+    if game_version < LAZER_GAME_VERSION:
+        return False
+    try:
+        buf = path.read_bytes()
+    except OSError:
+        return False
+    if len(buf) < 32:
+        return False
+    pos = 0
+    try:
+        pos += 1                       # mode (byte)
+        pos += 4                       # game_version (int)
+        pos = _skip_osr_string(buf, pos)   # beatmap hash
+        pos = _skip_osr_string(buf, pos)   # username
+        pos = _skip_osr_string(buf, pos)   # replay hash
+        pos += 6 * 2                   # 6 judgement counts (shorts)
+        pos += 4                       # total score (int)
+        pos += 2                       # max_combo (short)
+        pos += 1                       # perfect (byte)
+        pos += 4                       # mods bitfield (int)
+        pos = _skip_osr_string(buf, pos)   # life-bar graph
+        pos += 8                       # timestamp (long)
+        (replay_len,) = struct.unpack_from("<i", buf, pos)
+        pos += 4
+        if replay_len < 0 or pos + replay_len > len(buf):
+            return False
+        pos += replay_len              # opaque LZMA replay data
+        pos += 8                       # score_id / online_score_id (long)
+        # Trailing ScoreInfo blob: 4-byte LE length prefix (BinaryWriter.Write
+        # (int)), NOT the ULEB128 the rest of the .osr uses. Stable files end
+        # here (EOF) -> not a lazer replay -> not classic.
+        if pos + 4 > len(buf):
+            return False
+        (length,) = struct.unpack_from("<i", buf, pos)
+        pos += 4
+        if length <= 0 or pos + length > len(buf):
+            return False
+        compressed = buf[pos:pos + length]
+        try:
+            raw = lzma.decompress(compressed, format=lzma.FORMAT_ALONE)
+        except lzma.LZMAError:
+            raw = lzma.decompress(compressed, format=lzma.FORMAT_AUTO)
+        info = json.loads(raw.decode("utf-8"))
+        mods = info.get("mods") or []
+        return any(
+            (m.get("acronym") if isinstance(m, dict) else str(m)) == "CL"
+            for m in mods
+        )
+    except (struct.error, ValueError, lzma.LZMAError, json.JSONDecodeError,
+            UnicodeDecodeError, IndexError, KeyError, TypeError):
+        return False
+
+
 def parse_replay(path: Path) -> tuple[list[TaikoFrame], ReplayMeta]:
     if not path.exists():
         raise ReplayParseError(f"replay not found: {path}")
@@ -166,6 +264,7 @@ def parse_replay(path: Path) -> tuple[list[TaikoFrame], ReplayMeta]:
         accuracy=round(acc * 100, 2),
         grade=_grade(acc, r),
         game_version=int(getattr(r, "game_version", 0) or 0),
+        is_classic=_detect_classic(path, int(getattr(r, "game_version", 0) or 0)),
         life_bar=life_bar,
         replay_end_ms=replay_end_ms,
     )

@@ -118,6 +118,14 @@ class ReplayMeta:
     accuracy: float
     grade: str
     game_version: int = 0
+    # osu!lazer's Classic mod (CL) — present in the lazer ScoreInfo blob when the
+    # play uses stable-style mechanics (a stable-origin score re-imported into
+    # lazer, or lazer played with Classic). Used to pick the HP-drain model: a
+    # lazer-format replay carrying CL is rendered with the STABLE HP model, a
+    # native lazer play (no CL) with lazer's AccumulatingHealthProcessor. Only
+    # meaningful for lazer-format replays (game_version >= 30_000_000); stable
+    # .osr files can't encode CL and are always treated as stable anyway.
+    is_classic: bool = False
     # ((time_ms, life 0..1), …) from the .osr life-bar graph, if the replay
     # carries one (stable replays usually do; lazer/API ones often don't).
     life_bar: tuple = ()

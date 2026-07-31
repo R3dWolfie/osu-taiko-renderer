@@ -517,24 +517,58 @@ class TaikoSim:
         for _, e, _r in self._hit_errors:
             self._he_csum.append(self._he_csum[-1] + e)
             self._he_csq.append(self._he_csq[-1] + e * e)
-        # Health: lazer TaikoHealthProcessor (AccumulatingHealthProcessor(0.5)).
-        # Taiko HP ACCUMULATES from empty -> it starts at 0 and FILLS as notes
-        # are hit, reaching full partway through a clean play; it does NOT start
-        # full and drain like osu!std. Per-result base increase
-        # (TaikoJudgement.HealthIncreaseFor): GREAT=+3.0, OK=+1.1, MISS=-1.0,
-        # scaled by the drain-rate multipliers (ppy/osu TaikoHealthProcessor.cs):
+        # Health: taiko HP ACCUMULATES from empty -> it starts at 0 and FILLS as
+        # notes are hit, reaching full partway through a clean play; it does NOT
+        # start full and drain like osu!std. Both stable and lazer start empty
+        # (barrysir: "the health bar starts off empty"; lazer
+        # AccumulatingHealthProcessor.Reset -> Health.Value = 0).
+        #
+        # We render each replay with ITS OWN client's HP-drain model (lazer
+        # replay -> lazer HP, stable replay -> stable HP). Detection:
+        #   * lazer-format replay (game_version >= LAZER_GAME_VERSION) AND no
+        #     Classic mod            -> native lazer  -> lazer model
+        #   * anything else (stable .osr, or a lazer replay tagged Classic/CL,
+        #     or an ambiguous/unknown replay) -> STABLE model.
+        # Default-to-stable is deliberate (HexaMaster's lean: a lazer score
+        # passing by more than it did is less bad than a stable score looking
+        # like it doesn't pass). NB: when the .osr carries a recorded life-bar
+        # graph (stable replays almost always do), _hp_at draws that graph
+        # directly -- the ground-truth HP of whichever client recorded it -- and
+        # this synthesized model is only the fallback for graph-less replays
+        # (native lazer, and the rare stable/classic replay with no graph).
+        #
+        # SHARED skeleton (both models, per ppy/osu TaikoHealthProcessor.cs and
+        # barrysir's reverse-engineered stable model, which agree exactly here):
         #   hpMult     = 1 / (3 * hitCount * DifficultyRange(HP, .5, .75, .98))
         #   hpMissMult = DifficultyRange(HP, .0018, .0075, .0120)
-        # hitCount = number of Hit notes = n. (Drumroll-tick / swell health is
-        # not modelled -- we only judge notes -- so the climb is a hair slower
-        # than lazer on roll-heavy maps, but the fill-from-empty shape a taiko
-        # player expects is exact.) Was: std-like start-full-and-drain, which a
-        # taiko player reads as wrong (bar pinned full from the first note).
+        #   GREAT gain = 3.0 * hpMult          (identical stable == lazer)
+        #   MISS  loss = 1.0 * hpMissMult      (identical stable == lazer;
+        #               barrysir miss = osu_lerp(.36,1.5,2.4)/200 == hpMissMult)
+        # The ONLY divergence is the OK/"good"/green gain:
+        #   lazer : OK = 1.1 * hpMult                       (flat 11/30 of GREAT)
+        #   stable: OK = 3.0 * greenRatio(HP) * hpMult
+        #           greenRatio = DifficultyRange(HP, 88/30, 11/30, 11/30)
+        #           (barrysir _green = osu_lerp(88/30, 11/30, 11/30)); greens
+        #           heal more than yellows at low HP (up to ~3x at HP0), flat
+        #           11/30 at HP>=5 -> identical to lazer for HP>=5 maps.
+        # hitCount = number of Hit notes = n. (Drumroll-tick / swell / big-note
+        # bonus health is not modelled in EITHER path -- we only judge circles --
+        # a shared, documented approximation; stable's recorded life-bar graph,
+        # preferred above, captures all of it exactly for stable replays.)
+        _gv = int(getattr(self.meta, "game_version", 0) or 0)
+        _is_classic = bool(getattr(self.meta, "is_classic", False))
+        _is_lazer_hp = (_gv >= LAZER_GAME_VERSION) and not _is_classic
         _hit_count = max(1, n)
         _hp_rate = float(getattr(self.bm, "hp", 5.0) or 5.0)
         _hp_mult = 1.0 / (3.0 * _hit_count
                           * _difficulty_range(_hp_rate, 0.5, 0.75, 0.98))
         _hp_miss_mult = _difficulty_range(_hp_rate, 0.0018, 0.0075, 0.0120)
+        if _is_lazer_hp:
+            _ok_gain = 1.1 * _hp_mult
+        else:
+            _green_ratio = _difficulty_range(
+                _hp_rate, 88.0 / 30.0, 11.0 / 30.0, 11.0 / 30.0)
+            _ok_gain = 3.0 * _green_ratio * _hp_mult
         combo = great = ok = miss = score = 0
         hp = 0.0
         self._cum: list[tuple] = []
@@ -543,7 +577,7 @@ class TaikoSim:
             if r == GREAT:
                 great += 1; combo += 1; score += 300; hp += 3.0 * _hp_mult
             elif r == OK:
-                ok += 1; combo += 1; score += 100; hp += 1.1 * _hp_mult
+                ok += 1; combo += 1; score += 100; hp += _ok_gain
             else:
                 miss += 1; combo = 0; hp -= 1.0 * _hp_miss_mult
             hp = min(1.0, max(0.0, hp))
@@ -855,7 +889,15 @@ class TaikoSim:
     def _state_at(self, t):
         i = bisect.bisect_right(self._rt, t) - 1
         if i < 0:
-            return 0, 0, 0, 0, 0, 1.0, self._hp_at(t, 1.0)
+            # Before the first judged note the accumulating bar is EMPTY, not
+            # full: both stable (barrysir "starts off empty") and lazer
+            # (AccumulatingHealthProcessor.Reset -> Health.Value = 0) start at 0.
+            # Passing 0.0 (was 1.0) fixes the "flashes full then drops to 0 on
+            # the first hit" glitch on graph-less (lazer) replays; when the .osr
+            # carries a life-bar graph, _hp_at ignores this and returns the
+            # graph's first value (~0 for stable) regardless. Accuracy (6th) is
+            # still 1.0 = 100% with nothing judged yet.
+            return 0, 0, 0, 0, 0, 1.0, self._hp_at(t, 0.0)
         combo, great, ok, miss, _sum, hp = self._cum[i]
         score = self._scorev2[i] if i < len(self._scorev2) else _sum
         tot = great + ok + miss
