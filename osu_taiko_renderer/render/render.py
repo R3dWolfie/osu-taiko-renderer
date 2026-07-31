@@ -684,9 +684,10 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
     if audio is not None:
         if hitsound is not None:
             # [1:a] song -> music chain; [2:a] hitsound dub scaled by the preset
-            # effects (general) volume; amix without auto-normalise so neither
-            # side is ducked. Video (input 0) mapped explicitly.
-            hs_vol = max(0.0, cfg.general_volume / 100.0)
+            # effects (general) volume AND the -8 LU music-match gain (so the
+            # hits drop with the music, not blast on top); amix without
+            # auto-normalise so neither side is ducked. Video (0) mapped explicitly.
+            hs_vol = max(0.0, cfg.general_volume / 100.0) * _HITSOUND_MUSIC_MATCH_GAIN
             mc = music_chain if music_chain else "anull"
             fc = ("[1:a]" + mc + "[m];"
                   "[2:a]volume=" + f"{hs_vol:.3f}" + "[h];"
@@ -719,6 +720,14 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
 # key hashes `pre` (which includes this string), so lowering the target
 # auto-invalidates every cached PCM and rebuilds it — no stale (louder) audio.
 _LOUDNORM_FILTER = "loudnorm=I=-18:TP=-1.5:LRA=11"
+
+# Per-note hitsound track is amixed on TOP of the loudnorm'd music (normalize=0),
+# so lowering only the music (I=-10 -> -18, an 8 LU drop) would leave the taiko
+# drum hits blasting relative to the now-quieter song. Scale the hit track by the
+# same 8 LU: 10^(-8/20) = 0.398 ~= 0.40, matching the std/catch/mania engines so
+# the hit:music balance — and the overall render loudness — is uniform. Kept as
+# its own constant + separate commit so it can be reverted to music-only easily.
+_HITSOUND_MUSIC_MATCH_GAIN = 0.40
 
 
 def _audio_parts(start_ms: int, rate: float = 1.0, total_dur_s: float | None = None,
