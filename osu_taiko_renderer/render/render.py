@@ -628,10 +628,14 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
 
 
 # Single-pass loudnorm baseline (EBU R128) applied to every render's music so
-# hot beatmap masters stop blasting. Kept as one constant so the loudnorm cache
-# key (which must capture everything determining the loudnorm OUTPUT) tracks any
-# change to it automatically.
-_LOUDNORM_FILTER = "loudnorm=I=-10:TP=-1.5:LRA=11"
+# hot beatmap masters stop blasting. I=-18 LUFS: Red found every render WAY too
+# loud (listens at ~5% volume); ALL four engines (std/catch/taiko/mania) share
+# this one quieter integrated-loudness target so the whole site sounds uniform.
+# Kept as one constant so the loudnorm cache key (which must capture everything
+# determining the loudnorm OUTPUT) tracks any change to it automatically: the
+# key hashes `pre` (which includes this string), so lowering the target
+# auto-invalidates every cached PCM and rebuilds it — no stale (louder) audio.
+_LOUDNORM_FILTER = "loudnorm=I=-18:TP=-1.5:LRA=11"
 
 
 def _audio_parts(start_ms: int, rate: float = 1.0, total_dur_s: float | None = None,
