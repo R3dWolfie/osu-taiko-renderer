@@ -160,8 +160,12 @@ class TaikoSim:
         # the skin when it provides them, else Argon).
         self.skin = TaikoSkin(cfg.skin_dir)
         self.sk_drum = self.skin.has("taiko-bar-left")
-        self.sk_drum_in = self.skin.has("taiko-drum-inner")
-        self.sk_drum_out = self.skin.has("taiko-drum-outer")
+        # inner/outer press halves: the skin's, else the default fallback halves
+        # build_textures bakes whenever the skin has taiko-bar-left — so a legacy
+        # drum still FLASHES on every don/kat keypress (was static when the skin
+        # shipped no taiko-drum-inner/-outer).
+        self.sk_drum_in = self.skin.has("taiko-drum-inner") or self.sk_drum
+        self.sk_drum_out = self.skin.has("taiko-drum-outer") or self.sk_drum
         self.sk_barline = self.skin.has("taiko-barline")
         self.sk_roll = self.skin.has("taiko-roll-middle")
         self.sk_lane = self.skin.has("taiko-bar-right")

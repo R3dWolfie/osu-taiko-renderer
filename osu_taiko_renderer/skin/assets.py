@@ -227,6 +227,23 @@ def logo_glow_rgba(size: int = 128) -> np.ndarray:
     return np.array(img)
 
 
+def _fallback_drum_half(color, *, inner: bool, n: int = 192) -> np.ndarray:
+    """Default input-drum press half (LEFT side): the left half of the drum
+    circle, flat right edge on the centre line. inner=True -> filled CENTRE disc
+    (don, red); inner=False -> RIM annulus (kat, blue). Baked when a legacy skin
+    ships taiko-bar-left but omits taiko-drum-inner/-outer, so key presses still
+    light the drum (osu! falls back to its default drum halves)."""
+    W = n // 2
+    yy, xx = np.mgrid[0:n, 0:W].astype(np.float32)
+    cx, cy = float(W), (n - 1) / 2.0            # circle centre at the RIGHT edge
+    r = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) / (n / 2.0)
+    m = (r <= 0.62) if inner else ((r > 0.62) & (r <= 1.0))
+    out = np.zeros((n, W, 4), dtype=np.uint8)
+    out[..., 0], out[..., 1], out[..., 2] = color
+    out[..., 3] = np.where(m, 255, 0).astype(np.uint8)
+    return out
+
+
 def build_textures(skin_dir=None) -> dict[str, np.ndarray]:
     """Faithful Argon taiko textures (ported from lazer; see argon/). When a
     user .osk `skin_dir` provides legacy taiko note images, they override the
@@ -324,6 +341,15 @@ def build_textures(skin_dir=None) -> dict[str, np.ndarray]:
         img = skin.load(name)
         if img is not None:
             tex[key] = img
+    # A legacy skin can ship taiko-bar-left (the drum background) yet omit the
+    # taiko-drum-inner/-outer press halves. osu! then flashes its DEFAULT drum
+    # halves, so key presses still light the drum — bake red centre (don) + blue
+    # rim (kat) fallbacks (colours = LegacyHit centre/rim) so it isn't static.
+    if "skin_drum_idle" in tex:                 # skin has taiko-bar-left
+        if "skin_drum_inner" not in tex:
+            tex["skin_drum_inner"] = _fallback_drum_half((235, 69, 44), inner=True)
+        if "skin_drum_outer" not in tex:
+            tex["skin_drum_outer"] = _fallback_drum_half((67, 142, 172), inner=False)
     # mirrored drum halves for the right-side press (legacy drum-inner/outer are
     # left-half graphics).
     for base in ("skin_drum_inner", "skin_drum_outer"):
