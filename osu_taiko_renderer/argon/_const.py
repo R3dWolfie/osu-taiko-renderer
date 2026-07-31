@@ -53,19 +53,21 @@ DRUM_CENTRE_GRAY = (64, 64, 64, 255)      # OsuColour.Gray(64/255) centre base
 DRUM_SPLIT_GRAY_A = (38, 38, 38, 255)     # Gray(38/255)
 DRUM_SPLIT_GRAY_B = (48, 48, 48, 255)     # Gray(48/255)
 RIM_HIT_GRAD = ((227, 248, 255, 255), (198, 245, 255, 255))   # horizontal (unused now)
-RIM_HIT_GLOW = (126, 215, 253, 255)
+RIM_HIT_GLOW = (110, 210, 255, 255)
 CENTRE_HIT_GRAD = ((255, 227, 236, 255), (255, 198, 211, 255))
-CENTRE_HIT_GLOW = (255, 147, 199, 255)
-# The press highlight itself is a FLAT accent fill (no inner gradient); the glow
-# lives strictly OUTSIDE it (ArgonInputDrumHalf = flat Circle + EdgeEffect halo).
-# Fills are additive over the dark idle drum (gray ~51-64), so they're chosen
-# SATURATED — fill ≈ target − idle-gray — to land on a flat cyan/pink instead of
-# clipping to white: rim→~(140,215,255), centre→~(255,150,200).
-RIM_HIT_FILL = (89, 164, 204, 255)         # flat cyan kat highlight
-CENTRE_HIT_FILL = (191, 86, 136, 255)      # flat pink don highlight
+CENTRE_HIT_GLOW = (255, 165, 95, 255)
+# The press highlight is a FLAT accent fill (no inner gradient); the glow lives
+# strictly OUTSIDE it (ArgonInputDrumHalf = flat Circle + EdgeEffect halo). The
+# idle drum is now near-dark (bake_drum_idle), so the fill is composited
+# additively over ~black — it is set to the ON-SCREEN accent the game shows, not
+# a gray-compensated over-saturation. Ground truth (osu!lazer captures): a DON
+# press lights the centre a bright ORANGE (measured ~(250,150,85), not pink), a
+# KAT press lights the rim a bright CYAN-BLUE (~(60,190,214)).
+RIM_HIT_FILL = (70, 190, 214, 255)         # flat cyan-blue kat highlight (lazer)
+CENTRE_HIT_FILL = (250, 150, 85, 255)      # flat orange don highlight (lazer)
 DRUM_GLOW_STRENGTH = 1.0                   # additive strength of the outer halo
 DRUM_GLOW_RADIUS = 50                      # EdgeEffect glow radius (local px @200H)
-DRUM_PRESS_ALPHA = 0.5                     # +0.5 on press
+DRUM_PRESS_ALPHA = 0.95                    # near-full accent on press (lazer)
 DRUM_PRESS_DOWN_MS = 40
 DRUM_PRESS_UP_MS = 200
 

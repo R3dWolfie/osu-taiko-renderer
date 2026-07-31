@@ -269,21 +269,28 @@ def _hgrad(n, left, right):
 
 
 def bake_drum_idle(n=_N):
-    """ArgonInputDrum idle: gray rim circle (51/255) + gray centre disc
-    (64/255, size 0.7) + central vertical split bars."""
+    """ArgonInputDrum idle: a subtle DARK drum. osu!lazer's idle drum reads
+    nearly BLACK in the centre (measured (0,0,0) between presses); the halves
+    only light to the accent colour on press (composited separately). The old
+    bright gray filled disc (rim 51 / centre 64) read far heavier than the game
+    and muddied the press flashes on top. Instead draw a faint dark disc with a
+    slightly-lighter thin rim ring + the central split, so the drum position is
+    hinted without a solid gray plate."""
     r, c = _radius(n)
     out = np.zeros((n, n, 4), np.float32)
-    rim = (r <= 1.0).astype(np.float32)
-    _over(out, np.full((n, n, 3), C.DRUM_RIM_GRAY[0] / 255.0), rim)
-    centre = (r <= (1.0 - C.DRUM_RIM_SIZE)).astype(np.float32)
-    _over(out, np.full((n, n, 3), C.DRUM_CENTRE_GRAY[0] / 255.0), centre)
-    # vertical split: thin tall bar + shorter bar (over the centre)
+    disc = (r <= 1.0).astype(np.float32)
+    out[..., :3] = 0.09                          # very dark fill (~23/255)
+    out[..., 3] = disc * 0.5
+    rim = ((r > (1.0 - C.DRUM_RIM_SIZE)) & (r <= 1.0)).astype(np.float32)
+    rim_col = C.DRUM_RIM_GRAY[0] / 255.0
+    out[..., :3] = out[..., :3] * (1 - rim[..., None]) + rim_col * rim[..., None]
+    out[..., 3] = np.maximum(out[..., 3], rim * 0.7)
+    # central vertical split over the drum
     sw = max(1, int(C.DRUM_MIDDLE_SPLIT / C.BASE_HEIGHT * n))
     x0 = int(c - sw / 2)
-    yy = np.arange(n)
-    mask_full = (np.abs(np.arange(n) - c) <= sw / 2)
     out[:, x0:x0 + sw, :3] = C.DRUM_SPLIT_GRAY_A[0] / 255.0
-    out[:, x0:x0 + sw, 3] = np.maximum(out[:, x0:x0 + sw, 3], rim[:, x0:x0 + sw])
+    out[:, x0:x0 + sw, 3] = np.maximum(out[:, x0:x0 + sw, 3],
+                                       disc[:, x0:x0 + sw] * 0.5)
     return (np.clip(out, 0, 1) * 255).astype(np.uint8)
 
 
