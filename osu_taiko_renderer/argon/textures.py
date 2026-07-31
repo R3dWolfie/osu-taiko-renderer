@@ -76,26 +76,69 @@ def _as_rgba(im):
     return im
 
 
-def compose_skin_note(hc, overlay, tint, n=_N):
+def _content_bbox(arr, thr=20):
+    """(x0, y0, x1, y1) of the opaque content (alpha > thr) in an RGBA array,
+    or None when fully transparent. Used to align/scale a note's base + overlay
+    by their VISIBLE geometry rather than their (possibly padded) canvas."""
+    a = arr[..., 3]
+    ys, xs = np.where(a > thr)
+    if len(xs) == 0:
+        return None
+    return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+
+
+def _content_center(arr):
+    bb = _content_bbox(arr)
+    if bb is None:
+        return (arr.shape[1] - 1) / 2.0, (arr.shape[0] - 1) / 2.0
+    return (bb[0] + bb[2]) / 2.0, (bb[1] + bb[3]) / 2.0
+
+
+def compose_skin_note(hc, overlay, tint, n=_N, *, fit_overlay=False):
     """A legacy-skin taiko note: `taikohitcircle` multiply-tinted by the note
     colour (don red / kat blue / drumroll gold) with the untinted white
-    `taikohitcircleoverlay` composited on top. hc/overlay are RGBA arrays."""
+    `taikohitcircleoverlay` composited on top. hc/overlay are RGBA arrays.
+
+    The overlay (rim) is a SEPARATE skin sprite that osu draws Origin=Centre on
+    the circle — i.e. concentric with it. We compose the two into one texture, so
+    they must land on the SAME centre. Align by VISIBLE-CONTENT centre (not the
+    canvas), so an overlay with asymmetric transparent padding still sits
+    concentric with the circle instead of drifting off to one side.
+
+    `fit_overlay`: set when `hc` is a SYNTHESISED default base (the skin shipped
+    an overlay but no matching circle, e.g. taikobigcircleoverlay without
+    taikobigcircle). The default base's pixel size is arbitrary, so the raw
+    overlay/circle ratio is meaningless (and blows the rim up ~2x for an @2x
+    overlay). Instead scale the overlay so its content spans the base's content
+    diameter — a concentric rim at the note size, @2x-independent."""
     hc = _as_rgba(hc)
     base = np.array(Image.fromarray(hc).resize((n, n), Image.LANCZOS)).astype(np.float32)
     base[..., :3] *= np.array(tint, np.float32) / 255.0
     if overlay is not None:
-        # osu! stacks taikohitcircleoverlay on the circle at its NATIVE size,
-        # CENTRED — the overlay may be SMALLER or LARGER than the circle (skins
-        # vary widely). Scale by the overlay/circle ratio and composite only the
-        # overlapping region so any size/offset is safe.
         overlay = _as_rgba(overlay)
-        osz = max(1, int(round(n * (overlay.shape[0] / hc.shape[0]))))
-        o = np.array(Image.fromarray(overlay).resize((osz, osz), Image.LANCZOS)).astype(np.float32)
-        off = (n - osz) // 2
-        by0, bx0 = max(0, off), max(0, off)
-        by1, bx1 = min(n, off + osz), min(n, off + osz)
+        if fit_overlay:
+            # default base: size the overlay to the base's content diameter and
+            # align by CONTENT centre, so a padded / @2x / off-centre overlay
+            # still sits concentric with the note at the right size.
+            obb, bbb = _content_bbox(overlay), _content_bbox(base)
+            o_d = max(obb[2] - obb[0], obb[3] - obb[1]) + 1 if obb else overlay.shape[0]
+            b_d = max(bbb[2] - bbb[0], bbb[3] - bbb[1]) + 1 if bbb else n
+            osz = max(1, int(round(overlay.shape[0] * (b_d / o_d))))
+            o = np.array(Image.fromarray(overlay).resize((osz, osz), Image.LANCZOS)).astype(np.float32)
+            bcx, bcy = _content_center(base)
+            ocx, ocy = _content_center(o)
+            offx, offy = int(round(bcx - ocx)), int(round(bcy - ocy))
+        else:
+            # skin ships BOTH circle + overlay: keep osu's native-size ratio and
+            # canvas-centring (Origin=Centre) so a deliberately larger/smaller or
+            # off-centre rim is reproduced exactly as osu draws it.
+            osz = max(1, int(round(n * (overlay.shape[0] / hc.shape[0]))))
+            o = np.array(Image.fromarray(overlay).resize((osz, osz), Image.LANCZOS)).astype(np.float32)
+            offx = offy = (n - osz) // 2
+        by0, bx0 = max(0, offy), max(0, offx)
+        by1, bx1 = min(n, offy + osz), min(n, offx + osz)
         if by1 > by0 and bx1 > bx0:
-            oc = o[by0 - off:by1 - off, bx0 - off:bx1 - off]
+            oc = o[by0 - offy:by1 - offy, bx0 - offx:bx1 - offx]
             reg = base[by0:by1, bx0:bx1]
             a = oc[..., 3:4] / 255.0
             reg[..., :3] = reg[..., :3] * (1 - a) + oc[..., :3] * a

@@ -288,19 +288,25 @@ def build_textures(skin_dir=None) -> dict[str, np.ndarray]:
     # the skin's overlay onto a default legacy base disc instead of falling back
     # to a full Argon note. A present-but-blank overlay is already resolved to
     # its -0 animation frame by TaikoSkin.find (osu -0-blanks-static rule).
-    if hc is None and ov is not None:
+    # When the skin ships an overlay but no matching CIRCLE, the base is a
+    # synthesised default disc whose pixel size is arbitrary — tell compose to
+    # fit the overlay to the note (fit_overlay) so the rim is concentric and
+    # note-sized rather than mis-scaled/off-centre (see compose_skin_note).
+    hc_fit = hc is None and ov is not None
+    bc_fit = bc is None and bov is not None
+    if hc_fit:
         hc = _default_hitcircle_base()
-    if bc is None and bov is not None:
+    if bc_fit:
         bc = _default_hitcircle_base()
     if hc is not None:
-        tex["argon_don"] = AT.compose_skin_note(hc, ov, DON)
-        tex["argon_kat"] = AT.compose_skin_note(hc, ov, KAT)
-        tex["argon_drumroll"] = AT.compose_skin_note(hc, ov, GOLD)
+        tex["argon_don"] = AT.compose_skin_note(hc, ov, DON, fit_overlay=hc_fit)
+        tex["argon_kat"] = AT.compose_skin_note(hc, ov, KAT, fit_overlay=hc_fit)
+        tex["argon_drumroll"] = AT.compose_skin_note(hc, ov, GOLD, fit_overlay=hc_fit)
     # big-note textures: skin's taikobigcircle if present, else reuse the normal
     # note (the scene scales it — same as the Argon path).
     if bc is not None:
-        tex["argon_don_big"] = AT.compose_skin_note(bc, bov, DON)
-        tex["argon_kat_big"] = AT.compose_skin_note(bc, bov, KAT)
+        tex["argon_don_big"] = AT.compose_skin_note(bc, bov, DON, fit_overlay=bc_fit)
+        tex["argon_kat_big"] = AT.compose_skin_note(bc, bov, KAT, fit_overlay=bc_fit)
     else:
         tex["argon_don_big"] = tex["argon_don"]
         tex["argon_kat_big"] = tex["argon_kat"]
