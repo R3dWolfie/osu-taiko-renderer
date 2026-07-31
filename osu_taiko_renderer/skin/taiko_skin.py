@@ -89,6 +89,22 @@ class TaikoSkin:
     def has(self, name: str) -> bool:
         return self.find(name) is not None
 
+    def logical_height(self, name: str) -> float | None:
+        """Logical (osu-pixel) height of an element: the file's pixel height,
+        halved for an @2x asset. osu! legacy taiko sizes notes by the circle's
+        logical height relative to the 200px playfield reference (see scene.py),
+        so the caller needs the @2x-corrected size, not the raw file size."""
+        p = self.find(name)
+        if p is None:
+            return None
+        try:
+            h = Image.open(p).size[1]
+        except Exception:  # noqa: BLE001
+            return None
+        if "@2x" in p.name.lower():
+            h /= 2.0
+        return float(h)
+
     def load(self, name: str) -> np.ndarray | None:
         """RGBA uint8 array for an element, or None if absent/unreadable."""
         p = self.find(name)

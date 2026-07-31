@@ -165,6 +165,31 @@ class TaikoSim:
         self.sk_barline = self.skin.has("taiko-barline")
         self.sk_roll = self.skin.has("taiko-roll-middle")
         self.sk_lane = self.skin.has("taiko-bar-right")
+        self.sk_swell = self.skin.has("spinner-circle")   # legacy denden art
+        # taiko-roll-end native aspect (w/h) so the drumroll end cap keeps its
+        # true shape (a 64x128 semicircle must NOT be stretched to a square).
+        _re = self.skin.load("taiko-roll-end")
+        self._roll_end_aspect = (_re.shape[1] / _re.shape[0]) if _re is not None else 0.5
+
+        # --- legacy note SIZE (osu!stable vs Argon) ---------------------------
+        # osu! legacy taiko draws the hit circle at its authored pixel size on the
+        # 200px playfield reference (TaikoPlayfield.BASE_HEIGHT): the standard
+        # 128px taikohitcircle => note Ø = 128/200 = 0.64 * playfield_height.
+        # Argon/lazer instead normalise the legacy circle to DrawHeight/128 =
+        # DEFAULT_SIZE(0.475) * playfield_height, which is why lazer taiko notes
+        # read visibly SMALLER than stable. For a legacy note skin, size to the
+        # stable ratio (normal + big/finisher); a pure-Argon render keeps geometry.
+        self.sk_note = (self.skin.has("taikohitcircle")
+                        or self.skin.has("taikohitcircleoverlay"))
+        if self.sk_note:
+            _ch = (self.skin.logical_height("taikohitcircle")
+                   or self.skin.logical_height("taikohitcircleoverlay")
+                   or 128.0)
+            self.note_d = (_ch / AC.BASE_HEIGHT) * self.geo.pf_h
+            self.big_d = self.note_d * AC.STRONG_SCALE
+        else:
+            self.note_d = self.geo.note_d
+            self.big_d = self.geo.big_d
         # mascot (pippidon): count frames per state; aspect for sizing
         self.mascot_counts = {}
         for _st in ("idle", "kiai", "clear", "fail"):
@@ -1038,7 +1063,7 @@ class TaikoSim:
         # (taiko-bar-right / taiko-bar-left) carries its own target mark, so
         # skip the Argon overlay when the skin provides the lane. ---
         if not self.sk_lane:
-            sp.append(Sprite(g.target_x, cy, g.note_d, g.note_d,
+            sp.append(Sprite(g.target_x, cy, self.note_d, self.note_d,
                              "argon_hit_target", (1, 1, 1, 1)))
             bar_w = max(2.0, AC.HIT_TARGET_BORDER * g.scale)
             bar_h = (1.0 - AC.DEFAULT_STRONG_SIZE) * g.pf_h
@@ -1078,7 +1103,7 @@ class TaikoSim:
         # --- drumroll bodies / swells (under the notes) ---
         for o in self.rolls:
             end_ms = o.end_ms or o.time_ms
-            d = g.big_d if o.big else g.note_d
+            d = self.big_d if o.big else self.note_d
             if o.kind is TaikoType.DRUMROLL:
                 x0, p0 = self._x_at(o.time_ms, o.scroll_vel, t)
                 xe, pe = self._x_at(end_ms, o.scroll_vel, t)
@@ -1188,7 +1213,7 @@ class TaikoSim:
         # --- don/kat notes (earliest on top: draw reversed) ---
         for o in reversed(self.notes):
             rt, res = self.note_hit.get(id(o), (0, MISS))
-            d = g.big_d if o.big else g.note_d
+            d = self.big_d if o.big else self.note_d
             if o.kind is TaikoType.DON:
                 key = "argon_don"
             else:
