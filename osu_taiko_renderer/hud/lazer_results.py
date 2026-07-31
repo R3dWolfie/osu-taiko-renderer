@@ -949,6 +949,12 @@ class CatchLazerResults:
         self._osu_path = osu_path
         self._black_base = None            # cached opaque-black RGBA base (perf)
         self._panel_wcache: dict = {}      # stats-panel unfold resize per width (perf)
+        # perf: pre-baked animation assets (prebake_anim, run on a background
+        # thread during gameplay). Keyed so a cache hit returns EXACTLY what
+        # the inline bake would have produced; a miss falls through to the
+        # inline bake. Both threads only insert-if-absent, never overwrite.
+        self._arc_cache: dict = {}         # arc bucket -> baked arc image
+        self._score_cache: dict = {}       # rolled score value -> baked text
 
         # --- results data (the replay's authoritative taiko counts) ---------
         great = int(getattr(meta, "count_300", 0) or 0)   # taiko GREAT
@@ -1074,9 +1080,69 @@ class CatchLazerResults:
                 bake_text(value, int(32 * self.k), color))
 
     def _score_text(self, value: int) -> None:
-        self._score_img = bake_text(f"{value:,}", int(64 * self.k), (1, 1, 1),
-                                    loader=_font_score)
+        img = self._score_cache.get(value)
+        if img is None:
+            img = bake_text(f"{value:,}", int(64 * self.k), (1, 1, 1),
+                            loader=_font_score)
+            self._score_cache[value] = img
+        self._score_img = img
         self._score_val = value
+
+    def prebake_anim(self, schedule) -> None:
+        """Pre-bake the deterministic animation assets for the outro frame
+        `schedule` (list of (opacity, age_ms) pairs exactly as the render
+        loop will call render_frame). Meant to run on a BACKGROUND thread
+        during gameplay so the animated results window stops paying the
+        accuracy-arc / score-roll / stats-panel bakes per frame (they were
+        the ~16 ms/frame peaks). Every bake here is the same pure call the
+        per-frame path makes, inserted if-absent -- so frames are
+        bit-identical whether a given asset comes from this cache or is
+        baked inline (a race just means both sides compute the same pixels).
+        Fail-soft: any error leaves the per-frame path exactly as before."""
+        try:
+            score = int(self.meta.score)
+            prev_bucket = -1.0
+            pw = ph = 0
+            stage2 = bool(getattr(self, "_stage2", False))
+            if stage2:
+                pw, ph = self.stats_panel_img.size
+            for op, age_ms in schedule:
+                op = _clamp01(op)
+                fade = _clamp01(age_ms / FADE_MS) * op
+                if fade <= 0.003:
+                    continue
+                sweep = ease_out_cubic((age_ms - SWEEP_DELAY_MS) / SWEEP_MS) \
+                    if age_ms > SWEEP_DELAY_MS else 0.0
+                # accuracy arc: replicate _draw_acc_arc's bucket-change walk
+                # so each bucket is baked at the FIRST prog it is seen with.
+                prog = self.target_arc * sweep
+                bucket = round(prog, 3)
+                if bucket != prev_bucket:
+                    if bucket not in self._arc_cache:
+                        self._arc_cache[bucket] = bake_accuracy_arc(
+                            int(ACC_DISP * self.k), prog)
+                    prev_bucket = bucket
+                # score roll: keyed by the exact rolled value (pure function).
+                val = int(round(score * sweep))
+                if val not in self._score_cache:
+                    self._score_cache[val] = bake_text(
+                        f"{val:,}", int(64 * self.k), (1, 1, 1),
+                        loader=_font_score)
+                # stage-2 stats panels: width-squashed bg per integer width.
+                if stage2 and age_ms > STAGE1_MS:
+                    for idx in range(3):
+                        u = self._panel_unfold(age_ms, idx)
+                        if u <= 0.003:
+                            continue
+                        dw = max(int(pw * u), 1)
+                        if dw < pw and dw not in self._panel_wcache:
+                            self._panel_wcache[dw] = \
+                                self.stats_panel_img.resize((dw, ph),
+                                                            Image.BILINEAR)
+        except Exception as e:  # noqa: BLE001 -- prebake never breaks results
+            import sys
+            print(f"[taiko-renderer] results prebake stopped early: {e}",
+                  file=sys.stderr)
 
     # -- stage-2 bake ------------------------------------------------------------
 
@@ -1311,7 +1377,14 @@ class CatchLazerResults:
         prog = self.target_arc * sweep
         bucket = round(prog, 3)
         if bucket != self._arc_bucket or self._arc_img is None:
-            self._arc_img = bake_accuracy_arc(int(ACC_DISP * self.k), prog)
+            # prebake_anim walks the same frame schedule in the same order, so
+            # its cached image was baked with the same `prog` this call would
+            # use (buckets are monotone along the sweep -- no collisions).
+            img = self._arc_cache.get(bucket)
+            if img is None:
+                img = bake_accuracy_arc(int(ACC_DISP * self.k), prog)
+                self._arc_cache[bucket] = img
+            self._arc_img = img
             self._arc_bucket = bucket
         _paste(base, self._arc_img, cx, cy, a)
 

@@ -137,9 +137,19 @@ def _draw_lazer_results(cache, rgb, meta, bm, opacity, *, age_ms=None,
         if scr is False:                 # an earlier bake failed → plain frame
             return rgb
         if scr is None:
-            from osu_taiko_renderer.hud.lazer_results import CatchLazerResults
-            scr = CatchLazerResults((rgb.shape[1], rgb.shape[0]), meta, bm,
-                                    board=board, osu_path=osu_path, sim=sim)
+            # perf: render_core kicks a background thread that builds this
+            # instance (and pre-bakes its animation assets) DURING gameplay.
+            # Wait only for the build-published event — never the full
+            # prebake — then fall back to the original inline build if the
+            # thread failed (identical output either way).
+            evt = cache.get("evt")
+            if evt is not None:
+                evt.wait()
+                scr = cache.get("pre")
+            if scr is None:
+                from osu_taiko_renderer.hud.lazer_results import CatchLazerResults
+                scr = CatchLazerResults((rgb.shape[1], rgb.shape[0]), meta, bm,
+                                        board=board, osu_path=osu_path, sim=sim)
             cache["scr"] = scr
         return scr.render_frame(rgb, opacity, age_ms)
     except Exception as e:  # noqa: BLE001 — results must never kill a render
@@ -355,6 +365,41 @@ def render_core(
         except Exception:  # noqa: BLE001 — avatar wiring never breaks a render
             pass
     _lazer_results_cache: dict = {}
+    # perf: build the ported lazer results screen + pre-bake its deterministic
+    # animation assets on a BACKGROUND thread while gameplay renders (the
+    # build alone stalled the first outro frame ~320 ms, and the arc-sweep /
+    # score-roll / stats-unfold bakes were ~16 ms/frame peaks). The schedule
+    # below replicates the outro loop's (opacity, age_ms) sequence exactly.
+    # _draw_lazer_results waits only on the build event; every pre-baked
+    # asset is the same pure call the per-frame path makes, so frames are
+    # bit-identical. Fully fail-soft: any problem falls back to the original
+    # lazy inline build.
+    if cfg.show_results and outro_frames > 0:
+        _pre_evt = threading.Event()
+        _lazer_results_cache["evt"] = _pre_evt
+
+        def _prebuild_results() -> None:
+            try:
+                from osu_taiko_renderer.hud.lazer_results import CatchLazerResults
+                scr = CatchLazerResults((w, h), meta, bm, board=baked_board,
+                                        osu_path=osu_path, sim=sim)
+                _lazer_results_cache["pre"] = scr
+                _pre_evt.set()           # publish the instance first…
+                sched = []
+                for _i in range(gameplay_frames, n_frames):
+                    _t = int(gameplay_end_ms + (_i - gameplay_frames) * frame_ms)
+                    if _t >= results_start_ms:
+                        _op = min(1.0, (_t - results_start_ms) / FADE_MS)
+                        sched.append((_op, float(_t - results_start_ms)))
+                scr.prebake_anim(sched)  # …then keep baking in the background
+            except Exception as _e:  # noqa: BLE001 — never break a render
+                print(f"[taiko-renderer] results prebuild skipped: {_e}",
+                      file=sys.stderr)
+            finally:
+                _pre_evt.set()
+
+        threading.Thread(target=_prebuild_results, daemon=True,
+                         name="results-prebake").start()
     last_gameplay = None
     # Async pipeline (ported from the std renderer's proven design):
     #   * GPU readback goes through a 3-deep PBO ring (read_rgb_async returns
