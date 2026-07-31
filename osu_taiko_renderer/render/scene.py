@@ -1285,6 +1285,16 @@ class TaikoSim:
                 age = t - rt
                 if age > 100:
                     continue
+                if self.hidden:
+                    # osu!taiko Hidden (TaikoModHidden): the note faded to
+                    # invisible over the approach (alpha 0 by 37.5% of travel)
+                    # and must STAY invisible on the hit -- the note body is
+                    # never re-shown at the target. Only the hit explosion
+                    # (active_effects, NOT HD-gated) carries the feedback,
+                    # matching lazer HD. This was the 'note visible when hit
+                    # on HD+FL' bug: the body was re-drawn at full alpha at the
+                    # lit target, popping out of the flashlight black.
+                    continue
                 a = max(0.0, 1.0 - age / 100.0)     # quick fade at the target
                 sp.append(Sprite(g.target_x, cy, d, d, key, (1, 1, 1, a)))
                 continue
