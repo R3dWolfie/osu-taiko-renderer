@@ -316,6 +316,10 @@ def build_textures(skin_dir=None) -> dict[str, np.ndarray]:
         ("skin_hit_great", "taiko-hit300"),
         ("skin_hit_ok", "taiko-hit100"),
         ("skin_hit_miss", "taiko-hit0"),
+        # legacy denden (swell): osu!'s LegacySwell uses the std spinner sprites.
+        ("skin_spinner_circle", "spinner-circle"),
+        ("skin_spinner_approach", "spinner-approachcircle"),
+        ("skin_spinner_warning", "spinner-warning"),
     ):
         img = skin.load(name)
         if img is not None:

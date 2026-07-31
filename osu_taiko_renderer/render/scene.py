@@ -1145,24 +1145,16 @@ class TaikoSim:
                     while x <= tail + 1:
                         sp.append(Sprite(x, cy, d, d, "argon_tick", (1, 1, 1, 1)))
                         x += step
-            else:  # SWELL — faithful osu!lazer Argon DefaultSwell port:
-                # scroll in -> lock at target -> target ring expands 5x -> the
-                # asterisk spins + a yellow ring brightens with mash progress ->
-                # body fades + scales out on clear.
-                TARGET_SCALE = 5.0          # DefaultSwell.target_ring_scale
-                # lazer DefaultSwell: the target ring + centre circle are BOTH
-                # RelativeSizeAxes=Both (start coincident at the swell-circle size)
-                # and the ring does ScaleTo(5, OutQuint). Base it on the swell
-                # circle (big note) so it expands to ~5x and overflows the lane
-                # like lazer — the old `pf_h*0.95` cap made the "5x" ring barely
-                # note-sized, so the swell never read as a swell. Base on the
-                # note size (→ full ring ≈ 5×note ≈ 2.4× lane height: dramatic
-                # but stays on-screen; 5×big_d overflowed into the HUD).
-                base_ring = g.note_d
+            else:  # SWELL (denden): scroll in -> sit at target -> mash to fill
+                # over the FULL duration -> fade out at end. Completion is mash
+                # progress (drum hits / required_hits); the required_hits fix
+                # (beatmap._swell_hits, +1.65x) stops it filling far too early.
                 dur = max(1.0, end_ms - o.time_ms)
 
                 # clear/disappear (lazer: bodyContainer FadeOut 300ms OutQuad +
-                # ScaleTo 1.4 at HitStateUpdateTime ~= end).
+                # ScaleTo 1.4 at HitStateUpdateTime ~= end). The denden stays on
+                # screen for its WHOLE duration [start,end] — it never vanishes
+                # early on completion (osu!stable keeps the denden until its end).
                 end_age = t - end_ms
                 if end_age > 300:
                     continue
@@ -1181,48 +1173,59 @@ class TaikoSim:
                 else:
                     sx = g.target_x
 
-                # mash completion = hits inside [start, min(t,end)] / required.
+                # mash completion = drum hits inside [start, min(t,end)] / required.
                 req = max(1, int(getattr(o, "required_hits", 0) or 0))
                 if self._hit_times:
                     lo = bisect.bisect_left(self._hit_times, o.time_ms)
                     hi = bisect.bisect_right(self._hit_times, min(t, end_ms))
                     completion = min(1.0, max(0, hi - lo) / req)
-                else:                                     # no inputs -> time proxy
-                    completion = min(1.0, max(0.0, (t - o.time_ms) / dur))
-
-                # target ring: base size while scrolling in, expands base->5x
-                # over [start+100, start+500] with OutQuint.
-                if t < o.time_ms:
-                    ring_scale = 1.0
                 else:
-                    rt = min(1.0, max(0.0, (t - o.time_ms - 100.0) / 400.0))
-                    oq = 1.0 - (1.0 - rt) ** 5            # Easing.OutQuint
-                    ring_scale = 1.0 + (TARGET_SCALE - 1.0) * oq
-                ring_d = base_ring * ring_scale * body_scale
+                    completion = 0.0
+                # elapsed fraction of the denden's OWN duration (0 while scrolling
+                # in) — drives the approach ring so it visibly lasts the full time.
+                tprog = min(1.0, (t - o.time_ms) / dur) if t >= o.time_ms else 0.0
 
-                # expanding yellow ring (lazer additive; approximated with a
-                # bright yellow glow on the dark playfield): scales 1->5 and
-                # brightens with completion.
-                if t >= o.time_ms:
-                    exp_scale = 1.0 + (TARGET_SCALE - 1.0) * min(1.0, completion * 1.3)
-                    exp_d = base_ring * exp_scale * body_scale
-                    exp_a = min(0.55, 0.12 + completion * 0.6) * body_alpha
-                    if exp_a > 0.01:
-                        sp.append(Sprite(sx, cy, exp_d, exp_d, "argon_swell_glow",
-                                         (1.0, 0.92, 0.32, exp_a)))
-
-                # thin target ring on top of the glow — DefaultSwell tints it
-                # YellowDark(eeaa00)@0.25 additive; on our dark playfield we draw
-                # that gold crisp ring at a readable alpha (was a hard white ring,
-                # which broke the swell's all-gold Argon theme).
-                sp.append(Sprite(sx, cy, ring_d, ring_d, "argon_swell_ring",
-                                 (0.95, 0.71, 0.09, 0.8 * body_alpha)))
-
-                # centre asterisk: spins by completion * Duration / 8 (degrees).
-                cd = g.big_d * body_scale
-                cs = Sprite(sx, cy, cd, cd, "argon_swell", (1, 1, 1, body_alpha))
-                cs.rotation = math.radians(completion * dur / 8.0)
-                sp.append(cs)
+                if self.sk_swell:
+                    # osu! legacy denden (LegacySwell): the std spinner sprites.
+                    # spinner-approachcircle shrinks over the denden's DURATION
+                    # (1.488x -> 0.8x) so the denden reads as active for its whole
+                    # length; spinner-circle grows (0.8x -> 0.94x) and rotates
+                    # with MASH progress.
+                    base = g.pf_h * 0.9
+                    if self.skin.has("spinner-approachcircle"):
+                        app = (0.8 + (1.488 - 0.8) * (1.0 - tprog)) * base * body_scale
+                        sp.append(Sprite(sx, cy, app, app, "skin_spinner_approach",
+                                         (1, 1, 1, 0.8 * body_alpha)))
+                    cd = (0.8 + 0.14 * completion) * base * body_scale
+                    cs = Sprite(sx, cy, cd, cd, "skin_spinner_circle",
+                                (1, 1, 1, body_alpha))
+                    cs.rotation = math.radians(completion * 360.0 * 3.0)
+                    sp.append(cs)
+                else:
+                    # Argon DefaultSwell fallback (no legacy denden art): target
+                    # ring expands 5x (time), yellow glow + asterisk track mash.
+                    TARGET_SCALE = 5.0
+                    base_ring = self.note_d
+                    if t < o.time_ms:
+                        ring_scale = 1.0
+                    else:
+                        rt = min(1.0, max(0.0, (t - o.time_ms - 100.0) / 400.0))
+                        oq = 1.0 - (1.0 - rt) ** 5        # Easing.OutQuint
+                        ring_scale = 1.0 + (TARGET_SCALE - 1.0) * oq
+                    ring_d = base_ring * ring_scale * body_scale
+                    if t >= o.time_ms:
+                        exp_scale = 1.0 + (TARGET_SCALE - 1.0) * min(1.0, completion * 1.3)
+                        exp_d = base_ring * exp_scale * body_scale
+                        exp_a = min(0.55, 0.12 + completion * 0.6) * body_alpha
+                        if exp_a > 0.01:
+                            sp.append(Sprite(sx, cy, exp_d, exp_d, "argon_swell_glow",
+                                             (1.0, 0.92, 0.32, exp_a)))
+                    sp.append(Sprite(sx, cy, ring_d, ring_d, "argon_swell_ring",
+                                     (0.95, 0.71, 0.09, 0.8 * body_alpha)))
+                    cd = self.big_d * body_scale
+                    cs = Sprite(sx, cy, cd, cd, "argon_swell", (1, 1, 1, body_alpha))
+                    cs.rotation = math.radians(completion * dur / 8.0)
+                    sp.append(cs)
 
         # --- don/kat notes (earliest on top: draw reversed) ---
         for o in reversed(self.notes):

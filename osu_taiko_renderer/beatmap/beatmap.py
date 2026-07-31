@@ -370,10 +370,25 @@ def _edge_sounds(f, base_hs, spans):
 
 
 def _swell_hits(duration: float, od: float) -> int:
-    """Required alternating hits to clear a swell. Approximates osu!taiko's
-    duration- and OD-scaled hit count (refine vs lazer once validated)."""
-    rate = 3.0 + od * 0.4          # hits/sec, rises with OD
-    return max(1, int(duration / 1000.0 * rate))
+    """Required hits to clear a swell (denden), from osu!'s TaikoBeatmapConverter:
+
+        hitMultiplier = DifficultyRange(OD, 3, 5, 7.5) * 1.65   # hits/sec
+        RequiredHits  = max(1, (int)(duration_s * hitMultiplier))
+
+    This is IDENTICAL in osu!stable and osu!lazer (lazer ported stable's exact
+    constants — the 3/5/7.5 DifficultyRange and the 1.65 swell_hit_multiplier),
+    so there is no per-replay-version branch. The previous formula dropped the
+    1.65 multiplier (~60% of the real count), which made dendens fill/clear far
+    too early. Drives ONLY the visual completion meter + mascot clear trigger;
+    displayed score/acc/combo anchor to the .osr header (see scene._reconcile)."""
+    def _drange(v, mn, mid, mx):
+        if v > 5.0:
+            return mid + (mx - mid) * (v - 5.0) / 5.0
+        if v < 5.0:
+            return mid - (mid - mn) * (5.0 - v) / 5.0
+        return mid
+    hit_mult = _drange(od, 3.0, 5.0, 7.5) * 1.65
+    return max(1, int(duration / 1000.0 * hit_mult))
 
 
 # --- shared parsing helpers ---------------------------------------------------
