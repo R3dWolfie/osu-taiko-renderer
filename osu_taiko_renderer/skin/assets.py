@@ -325,4 +325,9 @@ def build_textures(skin_dir=None) -> dict[str, np.ndarray]:
     for base in ("skin_drum_inner", "skin_drum_outer"):
         if base in tex:
             tex[base + "_r"] = np.ascontiguousarray(tex[base][:, ::-1])
+    # mirrored drumroll end cap: taiko-roll-end is the RIGHT (round-right) cap;
+    # flipped it becomes the LEFT (round-left) head cap so the roll reads as a
+    # rounded bar built from the skin's own art (osu! legacy drumroll look).
+    if "skin_roll_end" in tex:
+        tex["skin_roll_end_l"] = np.ascontiguousarray(tex["skin_roll_end"][:, ::-1])
     return tex

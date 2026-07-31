@@ -1112,13 +1112,27 @@ class TaikoSim:
                 head, tail = min(x0, xe), max(x0, xe)   # head = leading (left) end
                 length = max(d, tail - head)
                 if self.sk_roll:
-                    # skin: stretched taiko-roll-middle body + taiko-roll-end cap;
-                    # head uses the gold drumroll note (argon_drumroll is the
-                    # skin's gold-tinted note when a skin is present).
+                    # osu! legacy drumroll = a rounded bar built from the skin's
+                    # own art: taiko-roll-middle stretched across [head, tail] +
+                    # a taiko-roll-end cap at EACH end at its TRUE aspect (a
+                    # 64x128 end is a half-circle: cap width = d * aspect, NOT a
+                    # stretched d x d square). The right cap's flat edge sits at
+                    # the body's right end; the left cap is the same art mirrored
+                    # so the head is a matching rounded end (not a mismatched
+                    # gold note-circle). All untinted — the skin colours the art.
+                    # osu! legacy roll art (taiko-roll-*) ships WHITE/greyscale
+                    # and the game TINTS it with the drumroll accent
+                    # (colours.YellowDark) — LegacyDrumRoll.AccentColour. Drawing
+                    # it untinted rendered a white hollow bar; tint it gold.
+                    GOLD = (0.918, 0.667, 0.0, 1.0)       # OsuColour.YellowDark #eaaa00
+                    capw = d * self._roll_end_aspect
                     sp.append(Sprite((head + tail) / 2, cy, length, d,
-                                     "skin_roll_mid", (1, 1, 1, 1)))
-                    sp.append(Sprite(tail, cy, d, d, "skin_roll_end", (1, 1, 1, 1)))
-                    sp.append(Sprite(head, cy, d, d, "argon_drumroll", (1, 1, 1, 1)))
+                                     "skin_roll_mid", GOLD))
+                    sp.append(Sprite(tail + capw / 2.0, cy, capw, d,
+                                     "skin_roll_end", GOLD))               # right cap
+                    lkey = "skin_roll_end_l" if self.skin.has("taiko-roll-end") else "skin_roll_end"
+                    sp.append(Sprite(head - capw / 2.0, cy, capw, d,
+                                     lkey, GOLD))                          # left cap (mirrored)
                 else:
                     # capsule body, rounded gold caps, chevron ticks (no glow —
                     # ArgonElongatedCirclePiece has no glow layer)
