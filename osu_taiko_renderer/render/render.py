@@ -289,6 +289,7 @@ def render_core(
                 miss_hitsound=cfg.miss_hitsound,
                 nightcore=cfg.nightcore_hitsounds,
                 nc_mod=bool(int(getattr(meta, "mods", 0) or 0) & 512),  # NC mod
+                gameplay_end_ms=gameplay_end_ms,   # beat overlays stop here (no results bleed)
                 press_edges=sim.drum_press_edges(), ok_window_ms=sim.ok_w)
         except Exception as _e:  # noqa: BLE001 — hitsounds never break a render
             print(f"[taiko-renderer] hitsound build skipped: {_e}", file=sys.stderr)

@@ -237,6 +237,7 @@ def build_taiko_hitsound_track(
     miss_hitsound: bool = True,
     nightcore: bool = False,
     nc_mod: bool = False,
+    gameplay_end_ms: float | None = None,
     press_edges: dict | None = None, ok_window_ms: float = 0.0,
 ) -> Path | None:
     """Build the stereo hitsound WAV at `output_wav`, aligned to the final video
@@ -293,7 +294,8 @@ def build_taiko_hitsound_track(
     # the NC drum overlay then) — never both on one render.
     nc_beats = 0
     if nightcore and not nc_mod:
-        nc_beats = _layer_metronome(track, beatmap, cache, dirs, start_ms, rate)
+        nc_beats = _layer_metronome(track, beatmap, cache, dirs, start_ms, rate,
+                                    gameplay_end_ms=gameplay_end_ms)
 
     # ModNightcore beat overlay — AUTOMATIC when the Nightcore mod is active,
     # independent of the `nightcore` metronome toggle above (both may lay).
@@ -302,7 +304,8 @@ def build_taiko_hitsound_track(
     nc_mod_beats = 0
     if nc_mod:
         nc_mod_beats = _layer_nightcore_mod(track, beatmap, cache, dirs,
-                                            start_ms, rate, play_hats=True)
+                                            start_ms, rate, play_hats=True,
+                                            gameplay_end_ms=gameplay_end_ms)
 
     if placed == 0 and nc_beats == 0 and nc_mod_beats == 0:
         return None
@@ -314,7 +317,8 @@ def build_taiko_hitsound_track(
 _METRONOME_GAIN = 0.35        # beat-overlay click sits under the per-note hits
 
 
-def _layer_metronome(track, beatmap, cache, dirs, start_ms, rate) -> int:
+def _layer_metronome(track, beatmap, cache, dirs, start_ms, rate,
+                     gameplay_end_ms=None) -> int:
     """Beat-overlay metronome (site 'Beat overlay (metronome)' toggle): a clap
     on every beat + a finish on every downbeat (beat 1 of the measure), across
     the whole song, mixed into the hitsound track. Beats come from the map's
@@ -327,8 +331,13 @@ def _layer_metronome(track, beatmap, cache, dirs, start_ms, rate) -> int:
     pts = list(getattr(timing, "uninherited", []) or []) if timing else []
     if not pts:
         return 0
-    # map-time horizon = the last sample the track can hold
+    # map-time horizon = the last sample the track can hold, but NEVER past the
+    # end of gameplay: osu!'s beat overlay only plays DURING play, not into the
+    # results/outro segment the video appends (the metronome/NC bleed the tester
+    # heard on the results screen).
     horizon = start_ms + (track.shape[0] / SAMPLE_RATE * 1000.0) * (rate or 1.0)
+    if gameplay_end_ms is not None:
+        horizon = min(horizon, float(gameplay_end_ms))
     default_set = getattr(beatmap, "default_sample_set", "normal") or "normal"
 
     def _click(sound, t):
@@ -398,7 +407,7 @@ def _nc_find(dirs, cache, base: str) -> np.ndarray | None:
 
 
 def _layer_nightcore_mod(track, beatmap, cache, dirs, start_ms, rate,
-                         *, play_hats: bool = True) -> int:
+                         *, play_hats: bool = True, gameplay_end_ms=None) -> int:
     """osu! ModNightcore beat overlay — the drum pattern osu! plays on each
     beat AUTOMATICALLY while the Nightcore mod is active. NOT the general
     'Beat overlay (metronome)' (_layer_metronome) above — both can lay onto
@@ -417,6 +426,8 @@ def _layer_nightcore_mod(track, beatmap, cache, dirs, start_ms, rate,
     if not pts:
         return 0
     horizon = start_ms + (track.shape[0] / SAMPLE_RATE * 1000.0) * (rate or 1.0)
+    if gameplay_end_ms is not None:      # stop at gameplay end, not into results
+        horizon = min(horizon, float(gameplay_end_ms))
     samples = {name: _nc_find(dirs, cache, f"nightcore-{name}")
                for name in ("kick", "clap", "hat", "finish")}
     if not any(v is not None for v in samples.values()):
