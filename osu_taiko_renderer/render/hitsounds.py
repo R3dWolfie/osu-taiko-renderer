@@ -31,6 +31,11 @@ COMBO_BREAK_THRESHOLD = 20    # stable: combobreak only on a combo >= 20 break
 COMBO_BREAK_GAIN = 0.65
 # Last-resort sample source (has every set x type + combobreak).
 _FALLBACK_SKIN = Path("/home/foof/r3drender/osu-catch/night05-skin")
+# Bundled osu! DEFAULT nightcore drums (ppy/osu-resources Legacy skin) — the
+# final fallback for the NC-mod overlay when the skin OMITS a nightcore sample
+# (osu! falls back to its default skin). A skin's SILENT nightcore file resolves
+# first and wins, so this never overrides a deliberately-silenced sample.
+_DEFAULT_NC_DIR = Path(__file__).resolve().parent.parent / "assets" / "default_nightcore"
 
 _SET_NAMES = {1: "normal", 2: "soft", 3: "drum"}     # 0 => beatmap default
 _ADDITIONS = ((2, "whistle"), (4, "finish"), (8, "clap"))
@@ -278,8 +283,10 @@ def build_taiko_hitsound_track(
                     _mix(track, arr, (p - start_ms) / rate, gain)
                     placed += 1
 
+    # The general metronome is SUPPRESSED while NC is active (osu! only plays
+    # the NC drum overlay then) — never both on one render.
     nc_beats = 0
-    if nightcore:
+    if nightcore and not nc_mod:
         nc_beats = _layer_metronome(track, beatmap, cache, dirs, start_ms, rate)
 
     # ModNightcore beat overlay — AUTOMATIC when the Nightcore mod is active,
@@ -375,7 +382,13 @@ def _nc_pattern(k: int, seg_len: int, mod: int, clap_pos: int, play_hats: bool):
 
 
 def _nc_find(dirs, cache, base: str) -> np.ndarray | None:
-    return _find(dirs, cache, [f"{base}.wav", f"{base}.ogg", f"{base}.mp3"])
+    names = [f"{base}.wav", f"{base}.ogg", f"{base}.mp3"]
+    arr = _find(dirs, cache, names)
+    # Bundled osu! default — FINAL fallback, only when the sample is ABSENT from
+    # the skin chain (a skin's SILENT file already resolved above and wins).
+    if arr is None and _DEFAULT_NC_DIR.is_dir():
+        arr = _find([_DEFAULT_NC_DIR], cache, names)
+    return arr
 
 
 def _layer_nightcore_mod(track, beatmap, cache, dirs, start_ms, rate,
