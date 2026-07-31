@@ -531,8 +531,11 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
     elif enc == "h264_nvenc":
         # Resolution-scaled bitrate ladder (was flat 8M) -- R3D cross-engine
         # NVENC policy; see nvenc_target_bps above.
+        # p3 (was p4): measured 247 -> 346 fps consumer-side at 1080p60 on the
+        # 2070S -- the raw-frame producer was backpressuring on the encoder.
+        # Same bitrate ladder/VBR caps, so quality stays visually equivalent.
         _tgt = nvenc_target_bps(w, h, cfg.fps)
-        cmd += ["-c:v", "h264_nvenc", "-preset", "p4", "-pix_fmt", "yuv420p",
+        cmd += ["-c:v", "h264_nvenc", "-preset", "p3", "-pix_fmt", "yuv420p",
                 "-b:v", str(_tgt), "-maxrate", str(int(_tgt * 1.5)),
                 "-bufsize", str(_tgt * 2)]
     else:
