@@ -199,27 +199,21 @@ class TaikoSim:
         _re = self.skin.load("taiko-roll-end")
         self._roll_end_aspect = (_re.shape[1] / _re.shape[0]) if _re is not None else 0.5
 
-        # --- legacy note SIZE (osu!stable vs Argon) ---------------------------
-        # osu!stable draws EVERY legacy taikohitcircle at a FIXED on-screen size:
-        # whatever sprite the skin ships (128px, an @2x/256px, a 450px circle, ...)
-        # is rescaled to the same 128px logical circle on the 200px playfield
-        # reference (TaikoPlayfield.BASE_HEIGHT). So a normal note is a CONSTANT
-        # Ø = 128/200 = 0.64 * playfield_height REGARDLESS of the source sprite's
-        # pixel dimensions (the sprite is scaled to fill note_d downstream).
-        # Sizing by the sprite's own height (an earlier build did `_ch/200 * pf_h`)
-        # blew large-circle / @2x skins up past the lane height -> overlapping
-        # "bignotes". Argon/lazer instead normalise to DEFAULT_SIZE(0.475), which
-        # reads visibly SMALLER than stable -> use the stable 0.64 ratio for a
-        # legacy note skin (normal + big/finisher); a pure-Argon render keeps its
-        # own geometry.
+        # --- note SIZE (osu!LAZER reference) ----------------------------------
+        # The reference is osu!lazer (confirmed by Red). Lazer sizes EVERY note
+        # to TaikoHitObject.DEFAULT_SIZE = 0.475 * playfield_height and a
+        # big/finisher note to DEFAULT_SIZE * STRONG_SCALE (=0.731), whatever
+        # skin is loaded -- a legacy skin's taikohitcircle is rescaled to that
+        # same on-screen size, NOT sized by its own sprite pixels. Measured off a
+        # real lazer capture (mekkadosu, TK'S Muzukashii): normal note 141px vs
+        # big 217px -> big/normal = 1.539 = STRONG_SCALE, and (via the big-note
+        # anchor big=0.731*pf_h) note/pf_h = 141/296.9 = 0.475 exactly. So legacy
+        # notes use the same geo sizing as Argon; no per-skin override. (An
+        # earlier stable-ratio 0.64 override made notes visibly too big.)
         self.sk_note = (self.skin.has("taikohitcircle")
                         or self.skin.has("taikohitcircleoverlay"))
-        if self.sk_note:
-            self.note_d = AC.STABLE_SIZE * self.geo.pf_h
-            self.big_d = self.note_d * AC.STRONG_SCALE
-        else:
-            self.note_d = self.geo.note_d
-            self.big_d = self.geo.big_d
+        self.note_d = self.geo.note_d          # 0.475 * pf_h (lazer DEFAULT_SIZE)
+        self.big_d = self.geo.big_d            # 0.731 * pf_h (DEFAULT_STRONG_SIZE)
         # mascot (pippidon): count frames per state; aspect for sizing
         self.mascot_counts = {}
         for _st in ("idle", "kiai", "clear", "fail"):
