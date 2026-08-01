@@ -12,6 +12,7 @@ multiplier (BPM x SV) so notes under different timing scroll at the right speed.
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from osu_taiko_renderer.beatmap.models import (TaikoBeatmap, TaikoObject,
@@ -27,6 +28,12 @@ _TYPE_SPINNER = 1 << 3
 _HS_WHISTLE = 1 << 1
 _HS_FINISH = 1 << 2
 _HS_CLAP = 1 << 3
+
+# osu casts a hit-object time (a double) to int; a non-finite value (a literal
+# "NaN"/"inf" in a torture map) becomes int.MinValue rather than raising. We
+# mirror that so such an object lands at this sentinel and is dropped by the
+# render-span clamp (see _drop_degenerate_objects) instead of crashing the parse.
+_INT_MIN_TIME = -2147483648
 
 
 class BeatmapParseError(RuntimeError):
@@ -266,30 +273,52 @@ def _parse_hit_objects(block: str, *, timing, slider_mult, od,
         f = line.split(",")
         if len(f) < 5:
             continue
-        time = int(float(f[2]))
-        typ = int(f[3])
-        hs = int(f[4])
+        try:
+            # osu parses a hit-object time as a double then casts to int; a
+            # non-finite value (a literal "NaN"/"inf" in a torture map — e.g.
+            # taiko 5453798's `256,192,NaN,12,0,NaN,...` spinner) casts to
+            # int.MinValue in the game — it does NOT raise. Mirror that so the
+            # object lands at the -2^31 sentinel (dropped later by the render-span
+            # clamp) instead of `int(float("NaN"))` throwing ValueError and
+            # killing the ENTIRE parse -> the taiko renderer exit-1 crash-loop
+            # (job 01KYZ29NCVCVJ0NGCDVRGA7Q1S, + auto bug reports).
+            t_raw = _f(f[2], 0.0)
+            time = int(t_raw) if math.isfinite(t_raw) else _INT_MIN_TIME
+            typ = int(float(f[3]))
+            hs = int(float(f[4]))
+        except (ValueError, IndexError, OverflowError):
+            print(f"[taiko] skipping unparseable hit-object header: {line[:80]!r}",
+                  flush=True)
+            continue
         is_new = bool(typ & _TYPE_NEW_COMBO) or not started
         started = True
         big = bool(hs & _HS_FINISH)
         scroll = timing.scroll_mult(time)
 
-        if typ & _TYPE_CIRCLE:
-            kind = TaikoType.KAT if (hs & (_HS_WHISTLE | _HS_CLAP)) else TaikoType.DON
-            _hsamp = _parse_hit_sample(f[5]) if len(f) > 5 else None
-            out.append(TaikoObject(time, kind, big=big, scroll_vel=scroll,
-                                   new_combo=is_new, hit_sound=hs, hit_sample=_hsamp))
-        elif typ & _TYPE_SLIDER:
-            out.extend(_convert_slider(
-                f, time, hs, big, scroll, is_new,
-                timing=timing, slider_mult=slider_mult,
-                slider_tick_rate=slider_tick_rate, is_for_taiko=is_for_taiko))
-        elif typ & _TYPE_SPINNER:
-            end = int(float(f[5])) if len(f) > 5 else time + 1000
-            hits = _swell_hits(end - time, od)
-            out.append(TaikoObject(time, TaikoType.SWELL, end_ms=end,
-                                   required_hits=hits, scroll_vel=scroll,
-                                   new_combo=is_new))
+        try:
+            if typ & _TYPE_CIRCLE:
+                kind = TaikoType.KAT if (hs & (_HS_WHISTLE | _HS_CLAP)) else TaikoType.DON
+                _hsamp = _parse_hit_sample(f[5]) if len(f) > 5 else None
+                out.append(TaikoObject(time, kind, big=big, scroll_vel=scroll,
+                                       new_combo=is_new, hit_sound=hs, hit_sample=_hsamp))
+            elif typ & _TYPE_SLIDER:
+                out.extend(_convert_slider(
+                    f, time, hs, big, scroll, is_new,
+                    timing=timing, slider_mult=slider_mult,
+                    slider_tick_rate=slider_tick_rate, is_for_taiko=is_for_taiko))
+            elif typ & _TYPE_SPINNER:
+                e_raw = _f(f[5], float(time + 1000)) if len(f) > 5 else float(time + 1000)
+                end = int(e_raw) if math.isfinite(e_raw) else _INT_MIN_TIME
+                hits = _swell_hits(end - time, od)
+                out.append(TaikoObject(time, TaikoType.SWELL, end_ms=end,
+                                       required_hits=hits, scroll_vel=scroll,
+                                       new_combo=is_new))
+        except (ValueError, IndexError, OverflowError) as _e:
+            # a single malformed object body is skipped (logged), never fatal —
+            # unknown future torture fields fail soft instead of crashing.
+            print(f"[taiko] skipping malformed hit-object ({_e}): {line[:80]!r}",
+                  flush=True)
+            continue
     return out
 
 
@@ -319,6 +348,11 @@ def _convert_slider(f, time, hs, big, scroll, is_new, *,
         except ValueError:
             spans = 1
     pixel_length = _f(f[7], 0.0) if len(f) > 7 else 0.0
+    if not math.isfinite(pixel_length):
+        # NaN/inf pixelLength (torture map) -> treat as 0 so the int() duration
+        # cast below cannot raise, and raw_px_len stays 0 (a plain scroll-through
+        # head, per the stable-slider spec's untested-NaN case).
+        pixel_length = 0.0
 
     beat = timing.beat_length(time)
     sv = timing.sv_mult(time)
