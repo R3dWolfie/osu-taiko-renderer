@@ -92,6 +92,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="write a per-gameplay-frame score sidecar (JSON array "
                          "of {t_ms,score,combo,acc}) to this path for the live "
                          "overlay compositor (#135). Omit -> not written.")
+    ap.add_argument("--storyboard", action=BA, default=False,
+                    help="parse the .osu/.osb and render the map's storyboard "
+                         "(in-house engine, parity with std). DEFAULT OFF; when "
+                         "off the render is byte-identical to today's.")
     # Accept-and-ignore: lets the shared render pipeline pass mode-agnostic
     # flags it also sends to the catch renderer without erroring here.
     args, _unknown = ap.parse_known_args(argv)
@@ -133,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         leaderboard_json=args.leaderboard_json,
         featured_avatar_png=args.featured_avatar_png,
         score_json_path=args.score_json,
+        load_storyboard=args.storyboard,
     )
     if args.results_seconds is not None:
         cfg.results_ms = int(args.results_seconds * 1000)

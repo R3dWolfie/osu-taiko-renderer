@@ -164,11 +164,38 @@ def _draw_lazer_results(cache, rgb, meta, bm, opacity, *, age_ms=None,
 def _build_storyboard(cfg, renderer, osu_path, w, h):
     """Construct the storyboard renderer when --storyboard is on, else None.
 
-    Phase 4 placeholder: returns None unconditionally so the frame loop takes
-    its exact single-draw path (live renders byte-identical). Phase 5 replaces
-    the body with the parse -> engine -> renderer construction and gates it on
-    cfg.load_storyboard."""
-    return None
+    Gated on cfg.load_storyboard (DEFAULT OFF) — while off this returns None
+    and the frame loop takes its exact single-draw path, so live renders are
+    byte-identical. Auto-discovers the map's .osb next to the .osu. Fully
+    fail-soft: any parse/build problem logs LOUDLY and renders without the
+    storyboard rather than crashing."""
+    if not getattr(cfg, "load_storyboard", False) or osu_path is None:
+        return None
+    try:
+        from osu_taiko_renderer.beatmap.storyboard import parse_storyboard
+        from osu_taiko_renderer.render.storyboard_engine import StoryboardEngine
+        from osu_taiko_renderer.render.storyboard_render import StoryboardRenderer
+        sb_data = parse_storyboard(osu_path)
+        engine = StoryboardEngine(sb_data)
+        if not engine.sprites:
+            print("[taiko-renderer] storyboard: no drawable sprites — "
+                  "rendering without storyboard", file=sys.stderr, flush=True)
+            return None
+        sbr = StoryboardRenderer(renderer, engine, Path(osu_path).parent,
+                                 w, h, widescreen=sb_data.widescreen)
+        c = sb_data.counts()
+        print(f"[taiko-renderer] storyboard: {len(engine.sprites)} drawable "
+              f"sprites ({c['sprites']} sprite, {c['animations']} animation, "
+              f"{c['videos']} video, {c['samples']} sample event(s) NOT played "
+              f"— storyboard audio deferred), widescreen={sb_data.widescreen}",
+              file=sys.stderr, flush=True)
+        return sbr
+    except Exception as e:  # noqa: BLE001 — a storyboard must never break a render
+        import traceback
+        print(f"[taiko-renderer] WARNING: storyboard load failed ({e!r}) — "
+              "rendering without storyboard", file=sys.stderr)
+        traceback.print_exc()
+        return None
 
 
 def render_core(
@@ -587,6 +614,15 @@ def render_core(
         print(f"done: {n_frames} frames in {_wall:.1f}s "
               f"({(n_frames / _wall) if _wall else 0.0:.1f} fps) ret={ret}",
               file=_rsys.stderr, flush=True)
+        if storyboard is not None:
+            try:
+                st = storyboard.stats()
+                print(f"storyboard cache: {st['uploads']} uploads, "
+                      f"{st['evictions']} evictions, {st['peak_mb']:.0f} MB "
+                      f"peak, {st['resident']} resident",
+                      file=_rsys.stderr, flush=True)
+            except Exception:  # noqa: BLE001 — stats print never breaks a render
+                pass
 
     if ret != 0:
         tail = ""

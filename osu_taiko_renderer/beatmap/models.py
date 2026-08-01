@@ -218,6 +218,11 @@ class RenderConfig:
     # so mania_ordr's taiko overlay compositor can draw live score/combo/acc on
     # the lanes. None (default) -> not written; normal renders are unaffected.
     score_json_path: Path | None = None
+    # Storyboard (in-house engine): parse the .osu/.osb and render the map's
+    # storyboard behind the playfield (+ Overlay layer over it). DEFAULT OFF so
+    # every live taiko render is byte-identical until this is deliberately
+    # flipped on. Mirrors the std renderer's --storyboard flag.
+    load_storyboard: bool = False
 
 
 @dataclass
