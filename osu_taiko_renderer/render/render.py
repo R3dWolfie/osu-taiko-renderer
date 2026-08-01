@@ -278,8 +278,13 @@ def render_core(
                   f"(source={src}, sim_final={_sim_final:,})",
                   file=sys.stderr, flush=True)
         except Exception as _sf_e:  # noqa: BLE001 — never break a render
-            print(f"[taiko-renderer] score fidelity FAILED (header kept): "
-                  f"{_sf_e}", file=sys.stderr, flush=True)
+            # Last-resort safety net: the sim guards degenerate inputs internally
+            # (non-finite times/values), so a throw here is genuinely unexpected.
+            # Fall back to the .osr header quietly — a single calm warning, not a
+            # scary "FAILED" (the render itself is fine).
+            print(f"[taiko-renderer] score fidelity unavailable, keeping .osr "
+                  f"header score: {type(_sf_e).__name__}: {_sf_e}",
+                  file=sys.stderr, flush=True)
             score_fid = None
 
     # preempt = the first object's actual on-screen travel time (scroll_time is

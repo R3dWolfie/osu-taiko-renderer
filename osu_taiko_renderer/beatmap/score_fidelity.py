@@ -125,6 +125,12 @@ def _f32(v: float) -> float:
 
 def difficulty_peppy_stars(hp: float, od: float, cs: float,
                            object_count: int, drain_length_s: int) -> int:
+    # Defensive: a non-finite HP/OD/CS (a "NaN" in a torture map's [Difficulty]
+    # section) would make `total` NaN and crash the int() below. Coerce to 0 —
+    # normal maps carry finite values so this never fires for them.
+    hp = hp if math.isfinite(hp) else 0.0
+    od = od if math.isfinite(od) else 0.0
+    cs = cs if math.isfinite(cs) else 0.0
     if drain_length_s != 0:
         otd = Decimal(object_count) / Decimal(drain_length_s) * 8
         otd = max(Decimal(0), min(Decimal(16), otd))
@@ -136,6 +142,13 @@ def difficulty_peppy_stars(hp: float, od: float, cs: float,
 
 
 def _round_even(x: float) -> int:
+    # Banker's-rounding float->int. A non-finite input (a NaN/inf leaking from a
+    # degenerate torture-map time) coerces to 0 instead of raising
+    # "cannot convert NaN to integer" — the genuinely-degenerate object it came
+    # from is dropped from the scored set anyway (mirrors the beatmap parser's
+    # NaN-sentinel handling). Finite values (every normal map) are unaffected.
+    if not math.isfinite(x):
+        return 0
     return int(Decimal(x).quantize(Decimal(1), rounding=ROUND_HALF_EVEN))
 
 
@@ -173,6 +186,8 @@ def parse_base_osu_facts(osu_path: Path) -> dict:
                 fv = float(v.strip())
             except ValueError:
                 continue
+            if not math.isfinite(fv):     # ignore a "NaN"/"inf" difficulty value
+                continue
             if k == "hpdrainrate":
                 hp = fv
             elif k == "overalldifficulty":
@@ -186,6 +201,8 @@ def parse_base_osu_facts(osu_path: Path) -> dict:
                     bs, be = float(parts[1]), float(parts[2])
                 except ValueError:
                     continue
+                if not (math.isfinite(bs) and math.isfinite(be)):
+                    continue          # skip a degenerate (NaN/inf) break period
                 break_ms += _round_even(be) - _round_even(bs)
         elif section == "hitobjects":
             parts = line.split(",")
@@ -194,6 +211,15 @@ def parse_base_osu_facts(osu_path: Path) -> dict:
             try:
                 t = float(parts[2])
             except ValueError:
+                continue
+            if not math.isfinite(t):
+                # Mirror the beatmap parser (beatmap.py: non-finite time ->
+                # _INT_MIN_TIME sentinel -> dropped by _drop_degenerate_objects):
+                # a literal "NaN"/"inf" hit-object time (torture-map gimmick) is
+                # not part of the scored play, so it counts toward neither the
+                # object count nor the drain span. Skipping it keeps this
+                # fact-parse consistent with the SANE object set the sim runs
+                # over — and stops the NaN from crashing _round_even below.
                 continue
             n_objects += 1
             if first_t is None:
@@ -215,7 +241,10 @@ def _slider_taiko_min_hit_delay(beat_length: float, tick_rate: float,
     drum-roll at (osu-stable SliderTaiko). Uses the UNINHERITED beat length at
     the roll's start; the SliderTickRate 3/6/1.5 cases tick on 1/6 of the beat,
     else 1/8, then the rate is doubled/halved into the [60, 120] ms band."""
-    if beat_length <= 0:
+    # A non-finite beat length (degenerate timing point) would make max_rate NaN,
+    # skip both clamp loops, and crash the int(mhd) in the caller. Fall back to a
+    # 1000 ms beat, same as the <=0 guard. Finite timing (normal maps) unaffected.
+    if not math.isfinite(beat_length) or beat_length <= 0:
         beat_length = 1000.0
     if version >= 8 and (abs(tick_rate - 3.0) < 1e-9 or abs(tick_rate - 6.0) < 1e-9
                          or abs(tick_rate - 1.5) < 1e-9):
