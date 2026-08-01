@@ -55,6 +55,14 @@ def _content_fill(arr, thr=20) -> float:
 # False to restore the header-count reconcile. Score still anchors to the .osr.
 _TAIKO_ALWAYS_HONEST = False   # Red 2026-07-30: match the .osr 1:1 (counts/acc/combo = header, = results). Reverts the 2026-07-27 honest-judgments call; reconcile may show a hit note as the miss to make the header count.
 
+# "stable slider" gimmick (negative-pixelLength taiko drumrolls): stable freezes
+# the drumroll HEAD circle mid-lane, holds it, then fades. Envelope measured from
+# the mapper's stable showcase video (see stable_slider_spec.md): the frozen
+# circle holds ~190 ms at full alpha, then fades in <=~40 ms. Both are real-time
+# (stable transform clocks), so scaled by the play rate when working in map time.
+_STABLE_ROLL_HOLD_MS = 190.0
+_STABLE_ROLL_FADE_MS = 40.0
+
 # --- tolerance-gated honest miss placement (the SUPERNOOB20 "misses rendered
 # wrong" root-fix; #NNN). The full reconcile (above) flips honest verdicts to
 # force the .osr header totals, so borderline notes can be shown at the wrong
@@ -1391,6 +1399,49 @@ class TaikoSim:
             end_ms = o.end_ms or o.time_ms
             d = self.big_d if o.big else self.note_d
             if o.kind is TaikoType.DRUMROLL:
+                raw = getattr(o, "raw_px_len", 0.0)
+                if raw < 0:
+                    # --- stable "stable slider" gimmick: a degenerate drumroll
+                    # (negative pixelLength) draws as a SINGLE frozen yellow head
+                    # circle, no body / caps-pair / ticks. All in screen px;
+                    # beatLength, green SV and SliderMultiplier all cancel in the
+                    # lead term, so this needs only pixelLength. The end-time
+                    # anchor LEADS the head by |duration|*velocity = 1.4*|L|, so
+                    # stable's off-screen kill (300.5 osupx past the target)
+                    # freezes the head mid-lane. See stable_slider_spec.md. ---
+                    spx = g.scale * 1.6                  # stable osupx -> px (=h/480 @16:9)
+                    lead = 1.4 * abs(raw) * spx          # |duration|*velocity
+                    K = 300.5 * spx                      # off-screen kill offset past target
+                    freeze_x = g.target_x + lead - K     # frozen head position
+                    x, p = self._x_at(o.time_ms, o.scroll_vel, t)
+                    alpha = 1.0
+                    if x <= freeze_x:                    # end-anchor passed the kill line
+                        x = freeze_x                     # stable transform-hold
+                        age = t - o.time_ms              # freeze lands within ~ms of StartTime
+                        hold = _STABLE_ROLL_HOLD_MS * self._rate   # real-time -> map-time
+                        fade = _STABLE_ROLL_FADE_MS * self._rate
+                        if age > hold:
+                            continue
+                        if age > hold - fade:
+                            alpha = max(0.0, 1.0 - (age - (hold - fade)) / fade)
+                    elif p > 1.1:                        # not yet scrolled on screen
+                        continue
+                    if x < -d:                           # slow regime: scrolled off left
+                        continue
+                    if self.sk_roll:
+                        # two GOLD taiko-roll-end half-circle caps back-to-back =
+                        # the plain yellow head circle stable shows (no mid/ticks).
+                        GOLD = (0.918, 0.667, 0.0, alpha)     # OsuColour.YellowDark #eaaa00
+                        capw = d * self._roll_end_aspect
+                        sp.append(Sprite(x + capw / 2.0, cy, capw, d,
+                                         "skin_roll_end", GOLD))            # right cap
+                        lkey = "skin_roll_end_l" if self.skin.has("taiko-roll-end") else "skin_roll_end"
+                        sp.append(Sprite(x - capw / 2.0, cy, capw, d,
+                                         lkey, GOLD))                       # left cap (mirror)
+                    else:
+                        sp.append(Sprite(x, cy, d, d, "argon_drumroll",
+                                         (1, 1, 1, alpha)))
+                    continue
                 x0, p0 = self._x_at(o.time_ms, o.scroll_vel, t)
                 xe, pe = self._x_at(end_ms, o.scroll_vel, t)
                 if p0 > 1.1 or pe < -0.2:

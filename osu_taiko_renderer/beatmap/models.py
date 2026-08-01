@@ -58,6 +58,12 @@ class TaikoObject:
     new_combo: bool = False
     hit_sound: int = 0                 # raw hitSound bitfield (for audio)
     hit_sample: 'HitSample | None' = None
+    # Signed pixelLength*spans, set ONLY for degenerate drumrolls (taiko sliders
+    # with a NEGATIVE/zero-duration length under a sub-1ms red line — the stable
+    # "stable slider" gimmick). Left 0.0 for normal rolls. Display-only: the
+    # renderer draws a frozen head circle for raw_px_len < 0 (see scene.py); the
+    # sim/score/reconcile path uses the CLAMPED end_ms and never reads this.
+    raw_px_len: float = 0.0
 
 
 @dataclass(frozen=True)

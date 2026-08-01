@@ -368,9 +368,18 @@ def _convert_slider(f, time, hs, big, scroll, is_new, *,
     taiko_duration = int(distance / taiko_velocity * adj_beat)
 
     def _drumroll():
+        # Degenerate taiko slider (negative/zero-duration drumroll — the "stable
+        # slider" gimmick): pass the SIGNED pixelLength*spans through as raw_px_len
+        # for the renderer's frozen-head display. end_ms stays CLAMPED (>=0 span)
+        # exactly as before, so the sim/score/reconcile/video-length paths are
+        # untouched. Normal rolls keep raw_px_len=0.0.
+        raw = 0.0
+        if taiko_duration <= 0 or pixel_length <= 0:
+            raw = pixel_length * spans      # <0 for the gimmick; 0 for NaN(->0)
         return [TaikoObject(time, TaikoType.DRUMROLL, big=big,
                             end_ms=int(time + max(0, taiko_duration)),
-                            scroll_vel=scroll, new_combo=is_new)]
+                            scroll_vel=scroll, new_combo=is_new,
+                            raw_px_len=raw)]
 
     if is_for_taiko:
         return _drumroll()
