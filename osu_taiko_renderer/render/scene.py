@@ -333,6 +333,33 @@ class TaikoSim:
         self.rolls = [o for o in bm.objects
                       if o.kind in (TaikoType.DRUMROLL, TaikoType.SWELL)]
         self.bar_lines = getattr(bm, "bar_lines", [])
+        # --- per-frame windowing (build_scene scales with on-screen objects, not
+        # total map size) ---------------------------------------------------------
+        # The three big build_scene loops (bar lines, rolls/swells, notes) used to
+        # iterate EVERY entry every frame and `continue` past the off-screen ones.
+        # On a "stable slider" gimmick map (tens of thousands of degenerate rolls
+        # + bar lines) that O(objects x frames) sweep is the render-stall wall
+        # (py-spy: stuck in build_scene). All three lists are time-sorted, so each
+        # frame we binary-search a conservative on-screen time window and iterate
+        # only that slice; the exact per-item progress test inside each loop still
+        # culls precisely, so nothing visible is ever dropped or reordered.
+        self._note_times = [o.time_ms for o in self.notes]
+        self._roll_times = [o.time_ms for o in self.rolls]     # head (start) times
+        self._barline_times = [b[0] for b in self.bar_lines]
+        # Largest on-screen scroll-in duration across the map: an object's travel
+        # time is scroll_time / max(scroll_vel, 0.1); the slowest scroll gives the
+        # widest window. Using this global bound guarantees the window is a
+        # superset for every object (per-object velocity only ever narrows it).
+        _svs = [getattr(o, "scroll_vel", 1.0) or 1.0 for o in self.notes]
+        _svs += [getattr(o, "scroll_vel", 1.0) or 1.0 for o in self.rolls]
+        _svs += [(b[1] or 1.0) for b in self.bar_lines]
+        _min_sv = min((max(0.1, s) for s in _svs), default=1.0)
+        self._max_visible = self.geo.scroll_time / _min_sv
+        # Longest roll/swell body: a roll whose head already scrolled off the left
+        # may still show its tail, so the roll window's lower bound is extended by
+        # this so such a body is never sliced out early.
+        self._max_roll_dur = max(
+            ((o.end_ms or o.time_ms) - o.time_ms for o in self.rolls), default=0.0)
         self.kiai = getattr(bm, "kiai_ranges", [])
         self.timing = getattr(bm, "timing", None)
         # R3D intro splash (show_logo): render.py sets logo_start_ms when the
@@ -1124,6 +1151,22 @@ class TaikoSim:
             return 0.15 * math.cos(phase / 0.75 * math.pi / 2)   # OutSine fade
         return 0.0
 
+    def _win(self, times, t, back=0.0):
+        """[lo, hi) slice of the time-sorted `times` that COULD be on screen at
+        frame time `t`. Conservative superset (uses the map's slowest scroll, so
+        every object's true window is contained); the per-item progress test in
+        build_scene still culls exactly, so this only skips entries that would be
+        `continue`d anyway. `back` extends the lower bound by an object's body
+        length (rolls/swells) so a long body whose head already passed the left
+        edge but whose tail is still visible is never sliced out early. The
+        -1.5/+1.5 margins sit well outside every loop's visible progress band
+        (bar [-0.03, 1.1], roll head <=1.1 / tail >=-0.2, note [-0.15, 1.1] plus
+        its <=100 ms hit/miss fade)."""
+        mv = self._max_visible
+        lo = bisect.bisect_left(times, t - 1.5 * mv - back)
+        hi = bisect.bisect_right(times, t + 1.5 * mv)
+        return lo, hi
+
     def _x_at(self, time_ms, scroll_vel, t):
         g = self.geo
         visible = g.scroll_time / max(scroll_vel, 0.1)
@@ -1322,7 +1365,8 @@ class TaikoSim:
 
         # --- bar lines (measure lines, scroll with notes; major brighter) ---
         blw = max(2, int(w * 0.0013))
-        for (btime, bsv, major) in self.bar_lines:
+        _blo, _bhi = self._win(self._barline_times, t)
+        for (btime, bsv, major) in self.bar_lines[_blo:_bhi]:
             bx, bp = self._x_at(btime, bsv, t)
             if bp < -0.03 or bp > 1.1:
                 continue
@@ -1342,7 +1386,8 @@ class TaikoSim:
                                  "argon_barline_anchor_f", (1, 1, 1, aa)))  # below
 
         # --- drumroll bodies / swells (under the notes) ---
-        for o in self.rolls:
+        _rlo, _rhi = self._win(self._roll_times, t, back=self._max_roll_dur)
+        for o in self.rolls[_rlo:_rhi]:
             end_ms = o.end_ms or o.time_ms
             d = self.big_d if o.big else self.note_d
             if o.kind is TaikoType.DRUMROLL:
@@ -1473,7 +1518,8 @@ class TaikoSim:
                     sp.append(cs)
 
         # --- don/kat notes (earliest on top: draw reversed) ---
-        for o in reversed(self.notes):
+        _nlo, _nhi = self._win(self._note_times, t)
+        for o in reversed(self.notes[_nlo:_nhi]):
             rt, res = self.note_hit.get(id(o), (0, MISS))
             d = self.big_d if o.big else self.note_d
             if o.kind is TaikoType.DON:
