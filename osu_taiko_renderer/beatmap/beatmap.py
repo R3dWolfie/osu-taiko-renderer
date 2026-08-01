@@ -159,6 +159,10 @@ def _parse_timing(block: str) -> _Timing:
         beat = _f(parts[1], 500.0)
         uninherited = True if len(parts) < 7 else parts[6].strip() == "1"
         meter = int(_f(parts[2], 4.0)) if len(parts) > 2 else 4
+        if uninherited and beat > 0:
+            # osu!lazer clamps TimingControlPoint.BeatLength to [6, 60000] ms;
+            # guards against denormal/degenerate beat lengths (e.g. map 4605861).
+            beat = min(60000.0, max(6.0, beat))
         pts.append((time, beat, uninherited))
         s_set = int(_f(parts[3], 0.0)) if len(parts) > 3 else 0
         s_idx = int(_f(parts[4], 0.0)) if len(parts) > 4 else 0
@@ -223,6 +227,13 @@ def _generate_bar_lines(timing: "_Timing", first_hit: float, last_hit: float):
         beat_i = 0
         t = start
         while t < end + 1e-3:
+            if len(out) >= 500_000:
+                print(
+                    "[taiko] bar-line cap hit (500000) - degenerate timing, "
+                    "truncating measure generation",
+                    flush=True,
+                )
+                break
             out.append((round(t), timing.scroll_mult(t), beat_i % meter == 0))
             t += bar_len
             beat_i += 1
