@@ -24,6 +24,8 @@ uniform vec2 u_screen;   // (w, h) in px
 uniform vec2 u_center;   // sprite center in px (origin top-left)
 uniform vec2 u_size;     // sprite w,h in px
 uniform float u_rot;     // radians
+uniform vec2 u_uv_off;   // texture UV offset (storyboard flip mirroring)
+uniform vec2 u_uv_scale; // texture UV scale  (default (1,1); -1 mirrors an axis)
 out vec2 v_uv;
 void main() {
     vec2 p = in_pos * u_size;
@@ -34,7 +36,9 @@ void main() {
     vec2 ndc = vec2(px.x / u_screen.x * 2.0 - 1.0,
                     1.0 - px.y / u_screen.y * 2.0);
     gl_Position = vec4(ndc, 0.0, 1.0);
-    v_uv = in_uv;
+    // identity default ((0,0)/(1,1)) == `in_uv`, so non-storyboard sprites are
+    // sampled bit-identically; a storyboard flip passes off=1,scale=-1 per axis.
+    v_uv = in_uv * u_uv_scale + u_uv_off;
 }
 """
 
@@ -92,6 +96,13 @@ class SpriteRenderer:
         self._u_center = self.prog["u_center"]
         self._u_size = self.prog["u_size"]
         self._u_rot = self.prog["u_rot"]
+        # UV flip uniforms (storyboard mirroring). Bound to identity so the
+        # very first draw with default sprites is unchanged; draw() only
+        # re-binds them when a sprite's uv differs from the last one drawn.
+        self._u_uv_off = self.prog["u_uv_off"]
+        self._u_uv_scale = self.prog["u_uv_scale"]
+        self._u_uv_off.value = (0.0, 0.0)
+        self._u_uv_scale.value = (1.0, 1.0)
 
         # Scene target is a TEXTURE (was a renderbuffer) so the flip pass can
         # sample it; RGBA8 rasterization into either is identical.
@@ -139,23 +150,46 @@ class SpriteRenderer:
 
     # --- texture management ---------------------------------------------------
 
-    def upload_texture(self, key: str, rgba: np.ndarray) -> None:
-        """rgba: HxWx4 uint8 array (top-left origin)."""
+    def upload_texture(self, key: str, rgba: np.ndarray,
+                       clamp: bool = False, mipmaps: bool = True) -> None:
+        """rgba: HxWx4 uint8 array (top-left origin). clamp=True sets
+        clamp-to-edge wrapping (the storyboard samples with a flipped UV that
+        can graze the edge texel; repeat wrap would wrap the far edge in).
+        mipmaps default True — existing callers pass neither and are unchanged
+        (mipmapped LINEAR, repeat wrap, exactly as before)."""
         if rgba.dtype != np.uint8:
             rgba = rgba.astype("u1")
         if rgba.shape[2] == 3:
             a = np.full(rgba.shape[:2] + (1,), 255, dtype="u1")
             rgba = np.concatenate([rgba, a], axis=2)
-        self._textures[key] = self._make_texture_rgba(rgba)
+        tex = self._make_texture_rgba(rgba, mipmaps=mipmaps)
+        if clamp:
+            tex.repeat_x = False
+            tex.repeat_y = False
+        self._textures[key] = tex
 
     def has_texture(self, key: str) -> bool:
         return key in self._textures
 
-    def _make_texture_rgba(self, rgba: np.ndarray) -> "moderngl.Texture":
+    def release_texture(self, key: str) -> None:
+        """Free a cached texture by key (storyboard LRU eviction). No-op if
+        the key is absent."""
+        tex = self._textures.pop(key, None)
+        if tex is not None:
+            try:
+                tex.release()
+            except Exception:  # noqa: BLE001 - context may be tearing down
+                pass
+
+    def _make_texture_rgba(self, rgba: np.ndarray,
+                           mipmaps: bool = True) -> "moderngl.Texture":
         h, w = rgba.shape[:2]
         tex = self.ctx.texture((w, h), 4, rgba.tobytes())
-        tex.build_mipmaps()
-        tex.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+        if mipmaps:
+            tex.build_mipmaps()
+            tex.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+        else:
+            tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
         return tex
 
     # --- drawing --------------------------------------------------------------
@@ -165,16 +199,43 @@ class SpriteRenderer:
         self.ctx.clear(*clear)
 
     def draw(self, sprites: list[Sprite]) -> None:
+        # Fast path — no additive sprite in the list: straight-alpha painter's
+        # order, exactly as before. Every existing (gameplay/HUD) sprite is
+        # additive=False, so this branch is taken for all live renders and the
+        # per-sprite GL state is identical to the old loop (the uv uniforms
+        # resolve to `in_uv`), so output is byte-identical.
+        if not any(sp.additive for sp in sprites):
+            self._draw_run(sprites)
+            return
+        # Storyboard / glow: draw the non-additive sprites first (straight
+        # alpha), then the additive ones (SRC_ALPHA, ONE) — the same two-phase
+        # order the std renderer uses. The storyboard renderer already splits
+        # its sprite list into maximal same-blend runs and calls draw() per
+        # run, so each run lands entirely in one phase (the other is empty) and
+        # back-to-front z within a blend is preserved.
+        normal = [sp for sp in sprites if not sp.additive]
+        additive = [sp for sp in sprites if sp.additive]
+        self._draw_run(normal)
+        if additive:
+            self.ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE)
+            self._draw_run(additive)
+            self.ctx.blend_func = (moderngl.SRC_ALPHA,
+                                   moderngl.ONE_MINUS_SRC_ALPHA)
+
+    def _draw_run(self, sprites: list[Sprite]) -> None:
         # perf: hoisted locals + cached uniform objects + redundant-bind skip.
-        # Per-draw GL state is identical to the old loop, so output is
-        # unchanged; only the Python-side overhead per sprite shrinks.
+        if not sprites:
+            return
         textures = self._textures
         white = self._white
         u_color, u_center = self._u_color, self._u_center
         u_size, u_rot = self._u_size, self._u_rot
+        u_uv_off, u_uv_scale = self._u_uv_off, self._u_uv_scale
         render = self.vao.render
         strip = moderngl.TRIANGLE_STRIP
         prev_tex = None
+        prev_uv_off = None
+        prev_uv_scale = None
         for sp in sprites:
             tex = textures.get(sp.texture_key) if sp.texture_key else white
             if tex is None:
@@ -186,6 +247,14 @@ class SpriteRenderer:
             u_center.value = (sp.x, sp.y)
             u_size.value = (sp.w, sp.h)
             u_rot.value = sp.rotation
+            # rebind uv only when it changes (defaults for every gameplay
+            # sprite, so this fires once per run and never mutates the raster)
+            if sp.uv_off != prev_uv_off:
+                u_uv_off.value = sp.uv_off
+                prev_uv_off = sp.uv_off
+            if sp.uv_scale != prev_uv_scale:
+                u_uv_scale.value = sp.uv_scale
+                prev_uv_scale = sp.uv_scale
             render(strip)
 
     _PBO_RING = 3
