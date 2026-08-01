@@ -253,6 +253,13 @@ class SceneState:
     time_ms: int = 0
     pp: float = 0.0
     counts: tuple = (0, 0, 0)   # (great, ok, miss)
+    # Storyboard compositing hooks (only read when --storyboard is on):
+    # `bg_split` = index in `sprites` where the beatmap background ends and the
+    # playfield begins, so the SB underlay can be drawn between them; the
+    # playfield draws on top. `sb_brightness` = 1 - background dim envelope, so
+    # the storyboard is tinted by the SAME dim as the bg (DimmableStoryboard).
+    bg_split: int = 0
+    sb_brightness: float = 1.0
 
 
 # osu!taiko geometry / timing -------------------------------------------------

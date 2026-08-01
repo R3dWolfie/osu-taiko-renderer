@@ -161,6 +161,16 @@ def _draw_lazer_results(cache, rgb, meta, bm, opacity, *, age_ms=None,
         return rgb
 
 
+def _build_storyboard(cfg, renderer, osu_path, w, h):
+    """Construct the storyboard renderer when --storyboard is on, else None.
+
+    Phase 4 placeholder: returns None unconditionally so the frame loop takes
+    its exact single-draw path (live renders byte-identical). Phase 5 replaces
+    the body with the parse -> engine -> renderer construction and gates it on
+    cfg.load_storyboard."""
+    return None
+
+
 def render_core(
     bm,
     frames,
@@ -313,6 +323,11 @@ def render_core(
     renderer.upload_texture("logo_glow", logo_glow_rgba())
     if bg is not None:
         renderer.upload_texture("bg", _bg_cover(bg, w, h, cfg.bg_blur))
+
+    # Storyboard renderer (phase 4/5): constructed only when --storyboard is on
+    # (see below). While None, the frame loop takes the exact single-draw path
+    # it always has, so live renders are byte-identical.
+    storyboard = _build_storyboard(cfg, renderer, osu_path, w, h)
 
     total_dur_s = n_frames / cfg.fps
     # Per-note hitsound dub (taiko previously rendered music-only). Built from
@@ -497,7 +512,24 @@ def render_core(
                             "acc": round(float(scene.accuracy), 6),
                         })
                     renderer.begin()
-                    renderer.draw(scene.sprites)
+                    if storyboard is None:
+                        # exact single-draw path (byte-identical to pre-SB)
+                        renderer.draw(scene.sprites)
+                    else:
+                        # interleave the two storyboard z-slices around the
+                        # playfield: bg image -> SB underlay (Background/Fail/
+                        # Pass/Foreground) -> playfield sprites -> SB overlay
+                        # (Overlay layer). taiko's HUD/effects are CPU-composited
+                        # after readback, so the whole GL pass sits under them —
+                        # the SB Overlay lands over gameplay, under the HUD, as
+                        # in lazer. Both slices share the bg dim (sb_brightness).
+                        n = scene.bg_split
+                        b = scene.sb_brightness
+                        if n:
+                            renderer.draw(scene.sprites[:n])
+                        storyboard.draw_underlay(t, b)
+                        renderer.draw(scene.sprites[n:])
+                        storyboard.draw_overlay(t, b)
                     exps, judges = sim.active_effects(t)
                     pending.append((scene, exps, judges, sim.drum_flashes(t)))
                     raw = renderer.read_rgb_async()

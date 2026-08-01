@@ -1300,11 +1300,19 @@ class TaikoSim:
         # lazer: ArgonPlayfieldBackgroundLeft (input-drum area) = solid black;
         # ArgonPlayfieldBackgroundRight (the note lane) = black @0.7 so the bg
         # shows through dimly. Boundary = the input-drum edge, not the target. ---
+        # preset bg dim via the DimEnvelope (intro/game/breaks levels with
+        # std's smoothstep glides): % dim (higher=darker) → brightness. Computed
+        # unconditionally so the storyboard (DimmableStoryboard) can share it
+        # even when there is no beatmap bg image; the value is otherwise the
+        # exact same one the bg sprite has always used, so nothing changes.
+        v = max(0.0, 1.0 - self._dim_env.level(t))
+        s.sb_brightness = v
         if self.has_bg:
-            # preset bg dim via the DimEnvelope (intro/game/breaks levels with
-            # std's smoothstep glides): % dim (higher=darker) → brightness
-            v = max(0.0, 1.0 - self._dim_env.level(t))
             sp.append(Sprite(w / 2, h / 2, w, h, "bg", (v, v, v, 1.0)))
+        # Split point for the storyboard underlay: it draws right after the
+        # beatmap background image (index 1 when present, else 0 = behind the
+        # lane strips), with the playfield drawn on top.
+        s.bg_split = len(sp)
         strip_h = g.pf_h * 1.18
         if self.sk_lane:
             # legacy lane background (taiko-bar-right), stretched across the
