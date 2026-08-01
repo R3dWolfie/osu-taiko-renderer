@@ -40,6 +40,57 @@ class BeatmapParseError(RuntimeError):
     pass
 
 
+# --- render-span sanity: ignore too-extreme objects ---------------------------
+# Torture maps put objects at impossible times/lengths: a spinner at the -2^31
+# "NaN" sentinel (osu partially ignores it, so gameplay starts normally), or
+# sliders with 14-digit-BPM / trillion-px lengths whose derived drumroll end runs
+# HOURS past the song. Left in, the map's computed time span balloons to tens of
+# thousands of hours, so the render loop runs "forever" — it clogs / OOMs a
+# worker or crashes mid-job. Solor's own suggestion: "just ignore objects if they
+# are too extreme." We drop ONLY the genuinely-degenerate outliers here so the
+# render covers just the real content.
+#
+# This is DISPLAY / RENDER-SPAN only: the dropped objects are spinners/drumrolls
+# that never contribute to the header-authoritative note counts (great/ok/miss,
+# combo, acc), and score anchors to the .osr header regardless — so sim / score /
+# judgment / reconcile are unaffected and the .osr's real gameplay renders fully.
+#
+# Thresholds are deliberately loose so a legit marathon (even 20-30 min, or a
+# multi-minute finale spinner) is NEVER trimmed — real maps are contiguous within
+# seconds-to-~a-minute, so a 10-minute gap unambiguously marks a phantom tail.
+_SANE_TIME_FLOOR_MS = -600_000        # -10 min: nothing legit starts this early
+_SANE_TIME_GAP_MS = 600_000           # 10 min: > any real break / object length
+
+
+def _drop_degenerate_objects(objects: list) -> tuple[list, int]:
+    """Return (kept_objects, dropped_count). `objects` must be time-sorted.
+
+    Drops an object when its time is (1) below the sane floor (the -2^31 NaN
+    sentinel / absurd-negative), (2) an implausible gap past the contiguous body
+    of real play (absurd-positive start), or (3) its END (drumroll/swell) sits an
+    implausible gap past that body (the trillion-px slider whose derived duration
+    is hours long). Everything within the contiguous real body is kept.
+    """
+    if not objects:
+        return objects, 0
+    n0 = len(objects)
+    kept = [o for o in objects if o.time_ms >= _SANE_TIME_FLOOR_MS]
+    if not kept:
+        return objects, 0          # everything below floor — bail, keep original
+    # Contiguous ceiling: walk the sorted start times and stop at the first jump
+    # larger than the sane gap (that jump is the start of a phantom tail).
+    starts = sorted(o.time_ms for o in kept)
+    ceil = starts[0]
+    for s in starts[1:]:
+        if s - ceil > _SANE_TIME_GAP_MS:
+            break
+        ceil = s
+    end_ceil = ceil + _SANE_TIME_GAP_MS
+    kept = [o for o in kept
+            if o.time_ms <= ceil and (o.end_ms or o.time_ms) <= end_ceil]
+    return kept, n0 - len(kept)
+
+
 def parse_beatmap(path: Path, *, mods: int = 0, lazer: bool = False) -> TaikoBeatmap:
     text = path.read_text(encoding="utf-8", errors="replace")
     sections = _split_sections(text)
@@ -88,6 +139,15 @@ def parse_beatmap(path: Path, *, mods: int = 0, lazer: bool = False) -> TaikoBea
         slider_tick_rate=slider_tick_rate, is_for_taiko=(source_mode == 1),
     )
     objects.sort(key=lambda o: o.time_ms)
+    # Ignore too-extreme (NaN-sentinel / trillion-px) objects so the render span
+    # (below, and render.py's frame count) covers only real content — never the
+    # phantom ~30,000-hour tail that clogs/crashes a worker. Real gameplay,
+    # judgment and score are unaffected (see _drop_degenerate_objects).
+    objects, _n_dropped = _drop_degenerate_objects(objects)
+    if _n_dropped:
+        print(f"[taiko] ignored {_n_dropped} too-extreme object(s) "
+              f"(NaN-sentinel/absurd time or length) for the render span; "
+              f"real gameplay is unaffected", flush=True)
     first_t = objects[0].time_ms if objects else 0
     last_t = max((o.end_ms or o.time_ms for o in objects), default=0)
     bar_lines = _generate_bar_lines(timing, first_t, last_t)
