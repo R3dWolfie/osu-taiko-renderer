@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import bisect
 import math
+import os
 
 import numpy as np
 
@@ -53,6 +54,30 @@ def _content_fill(arr, thr=20) -> float:
 # match the .osr header miss total / max_combo (Red 2026-07-27, #25). Flip to
 # False to restore the header-count reconcile. Score still anchors to the .osr.
 _TAIKO_ALWAYS_HONEST = False   # Red 2026-07-30: match the .osr 1:1 (counts/acc/combo = header, = results). Reverts the 2026-07-27 honest-judgments call; reconcile may show a hit note as the miss to make the header count.
+
+# --- tolerance-gated honest miss placement (the SUPERNOOB20 "misses rendered
+# wrong" root-fix; #NNN). The full reconcile (above) flips honest verdicts to
+# force the .osr header totals, so borderline notes can be shown at the wrong
+# place/verdict. This path instead TRUSTS the honest per-key sweep WHEN it agrees
+# with the header (exactly, or within K notes/max-combo), and only then shows the
+# honest miss placement; beyond K it falls back to the full reconcile unchanged.
+# In EVERY accepted case the displayed COUNT TOTALS + max_combo stay header-exact
+# (results-screen numbers never change) — only WHICH notes are the misses (and the
+# live HUD pacing) becomes honest. Default OFF so live renders are byte-identical
+# to today until Red deliberately flips it. Instant kill-switch / opt-in via the
+# R3D_TAIKO_HONEST env var (mirrors the R3D_CATCH_NO_POSOFFSETS pattern):
+#   unset -> use _TAIKO_HONEST_GATED below;  =1/on -> force ON;  =0/off -> force OFF.
+_TAIKO_HONEST_GATED = False
+_TAIKO_HONEST_TOL_K = 2        # per-tier AND max-combo delta tolerance, in notes
+
+
+def _honest_gated_enabled() -> bool:
+    """Whether the tolerance-gated honest miss-placement path is active. Env var
+    R3D_TAIKO_HONEST overrides the module default (kill-switch / opt-in)."""
+    v = os.environ.get("R3D_TAIKO_HONEST")
+    if v is not None:
+        return v.strip().lower() in ("1", "true", "on", "yes")
+    return _TAIKO_HONEST_GATED
 
 # osu!lazer ScoreV3 total-score mod multipliers — ppy/osu#37967 (mode-agnostic;
 # identical table to the std/catch/mania engines). Rate mods (DT/HT) at the
@@ -630,6 +655,7 @@ class TaikoSim:
         (a real combo break) and never breaking the protected clean run."""
         m = self.meta
         n = len(st.res)
+        self._honest_decision = "reconcile"
         seq = st.order_t
         sim_g = sum(1 for r in st.res if r == GREAT)
         sim_o = sum(1 for r in st.res if r == OK)
@@ -675,6 +701,17 @@ class TaikoSim:
                 f"taiko: max combo {honest_longest} (honest; header {T})")
             return is_miss
 
+        # --- tolerance-gated honest path (flagged; default OFF) ---------------
+        # sum == n here, so honest note-verdicts map 1:1 to the header tiers. When
+        # the honest sweep already agrees with the header (exactly, or within K),
+        # show the HONEST miss placement instead of fabricating misses. Beyond K,
+        # fall through to the header-count reconcile below (unchanged).
+        if _honest_gated_enabled():
+            gated = self._reconcile_honest_gated(
+                st, is_miss, sim_g, sim_o, sim_m, honest_longest, hg, ho, hm, T)
+            if gated is not None:
+                return gated
+
         M = hm
         # per-POSITION hit-likeness (immutable snapshot of the honest sweep):
         # small = a clean hit; large = a miss-like note. Real hits rank by timing
@@ -709,6 +746,84 @@ class TaikoSim:
             print("[taiko-renderer] " + note, file=__import__("sys").stderr)
         self._maxcombo_note = note
         return is_miss
+
+    def _reconcile_honest_gated(self, st, honest_is_miss, sim_g, sim_o, sim_m,
+                               honest_longest, hg, ho, hm, T):
+        """Tolerance-gated honest miss placement. Returns is_miss[] when the honest
+        sweep is trustworthy — equal to the header exactly, or within K notes in
+        every tier AND max-combo — else None so the caller falls back to the full
+        header-count reconcile. In BOTH accepted cases the displayed count totals
+        and max_combo stay header-exact (the great/ok split is forced to the header
+        by _judge step D; the miss TOTAL is hm here); only WHICH notes are misses
+        becomes honest. This is the bug fix, gated so it can never regress a play
+        whose honest sim disagrees with the .osr."""
+        K = _TAIKO_HONEST_TOL_K
+        dg, do, dm = sim_g - hg, sim_o - ho, sim_m - hm
+        dmc = honest_longest - T
+        # EXACT: honest already equals the header → ship honest verbatim.
+        if dg == 0 and do == 0 and dm == 0 and dmc == 0:
+            self._honest_decision = "exact"
+            self._maxcombo_after = honest_longest
+            self._reconcile_note = (
+                f"taiko: HONEST-GATED exact {sim_g}/{sim_o}/{sim_m} == header "
+                f"{hg}/{ho}/{hm} (max combo {honest_longest})")
+            self._maxcombo_note = (
+                f"taiko: max combo {honest_longest} (honest == header {T})")
+            return list(honest_is_miss)
+        # WITHIN K: gently nudge the miss SET to the header total + max-combo,
+        # touching only the most-borderline notes; verify header-exact + max-combo
+        # or fall back (never ship a play whose totals/combo don't match the .osr).
+        if abs(dg) <= K and abs(do) <= K and abs(dm) <= K and abs(dmc) <= K:
+            nudged = self._nudge_miss_set(st, honest_is_miss, hm)
+            if nudged is not None and sum(nudged) == hm:
+                final_longest = _longest_run(
+                    [MISS if nudged[i] else GREAT for i in st.order_t])
+                if T <= 0 or final_longest == T:
+                    changed = sum(1 for i in range(len(nudged))
+                                  if nudged[i] != honest_is_miss[i])
+                    self._honest_decision = "within_k"
+                    self._maxcombo_after = final_longest
+                    self._reconcile_note = (
+                        f"taiko: HONEST-GATED within K={K}: honest "
+                        f"{sim_g}/{sim_o}/{sim_m} → header {hg}/{ho}/{hm} "
+                        f"({changed} borderline nudge(s))")
+                    self._maxcombo_note = (
+                        f"taiko: max combo {final_longest} "
+                        f"(honest-gated; target {T})")
+                    return nudged
+        # beyond tolerance (or the gentle nudge couldn't hit both targets) →
+        # caller falls back to the full reconcile.
+        self._honest_decision = "fallback"
+        return None
+
+    def _nudge_miss_set(self, st, honest_is_miss, hm):
+        """Reach EXACTLY hm misses from the honest miss set by flipping the fewest,
+        most-borderline notes: promote the worst-timed genuine hits (nearest the
+        OK-window edge) to misses, or demote the most-ambiguous honest misses (a
+        matching press sits nearest) to hits. Never touches a confidently-hit note
+        beyond what the count demands. Returns is_miss[] or None if it can't reach
+        hm (caller then falls back)."""
+        n = len(honest_is_miss)
+        is_miss = list(honest_is_miss)
+        need = hm - sum(is_miss)
+        if need > 0:
+            # add misses: worst-timed genuine hits first (nearest the OK edge).
+            cand = sorted((i for i in range(n)
+                           if not is_miss[i] and st.real_press[i]),
+                          key=lambda i: -st.err_mag[i])
+            if len(cand) < need:
+                return None
+            for i in cand[:need]:
+                is_miss[i] = True
+        elif need < 0:
+            # remove misses: the most ambiguous honest misses (nearest a press).
+            cand = sorted((i for i in range(n) if is_miss[i]),
+                          key=lambda i: st.miss_prox[i])
+            if len(cand) < -need:
+                return None
+            for i in cand[:(-need)]:
+                is_miss[i] = False
+        return is_miss if sum(is_miss) == hm else None
 
     def _choose_miss_positions(self, n, M, T, qpos, hmiss):
         """Pick exactly M note POSITIONS (time order) to be misses so the longest
