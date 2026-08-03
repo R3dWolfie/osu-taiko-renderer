@@ -7,6 +7,7 @@ with PIL after GL readback — cheap and avoids a GL text pass for Phase 1.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import queue
 import subprocess
@@ -26,6 +27,8 @@ from osu_taiko_renderer.render.gl import SpriteRenderer
 from osu_taiko_renderer.beatmap.models import RenderConfig
 from osu_taiko_renderer.beatmap.replay import parse_replay
 from osu_taiko_renderer.render.scene import TaikoSim
+
+log = logging.getLogger(__name__)
 
 
 class TaikoRenderError(RuntimeError):
@@ -354,7 +357,9 @@ def render_core(
     renderer.upload_texture("logo_tile", bake_logo_tile())
     renderer.upload_texture("logo_glow", logo_glow_rgba())
     if bg is not None:
-        renderer.upload_texture("bg", _bg_cover(bg, w, h, cfg.bg_blur))
+        _bg_tex = _bg_cover(bg, w, h, cfg.bg_blur)
+        if _bg_tex is not None:
+            renderer.upload_texture("bg", _bg_tex)
 
     # Storyboard renderer (phase 4/5): constructed only when --storyboard is on
     # (see below). While None, the frame loop takes the exact single-draw path
@@ -978,9 +983,15 @@ def _resolve_music_audio(audio: Path, pre: str, post: str):
     return cache_path, (post if post else "anull")
 
 
-def _bg_cover(path: Path, w: int, h: int, blur: int = 0) -> "np.ndarray":
-    """Load the beatmap background and cover-crop it to WxH (no distortion)."""
-    im = Image.open(path).convert("RGB")
+def _bg_cover(path: Path, w: int, h: int, blur: int = 0) -> "np.ndarray | None":
+    """Load the beatmap background and cover-crop it to WxH (no distortion).
+    Returns None if the (user-supplied) background can't be decoded, so the
+    caller skips the bg upload -- same as a map with no background."""
+    try:
+        im = Image.open(path).convert("RGB")
+    except Exception as e:  # noqa: BLE001 -- a corrupt user bg must not crash the render
+        log.warning("background image failed to decode, skipping: %s (%s)", path, e)
+        return None
     scale = max(w / im.width, h / im.height)
     nw, nh = max(1, int(im.width * scale)), max(1, int(im.height * scale))
     im = im.resize((nw, nh), Image.LANCZOS)
