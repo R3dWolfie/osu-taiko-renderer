@@ -16,3 +16,6 @@ venv/
 *_backup-*/
 *_backup_*/
 _smoke_*.py
+
+# R3D logo — license-clean own IP; keep it in-repo so clones do not fall back to the placeholder tile
+!osu_taiko_renderer/assets/logo.png
