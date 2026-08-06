@@ -881,10 +881,23 @@ class TaikoSim:
         for p in range(n):
             pre_hm[p + 1] = pre_hm[p] + hmiss[p]
             pre_q[p + 1] = pre_q[p] + qpos[p]
+        # tiebreak among the fewest-honest-miss windows: land the two FORCED
+        # boundary breaks (a-1, b+1) on a map EDGE (free) or on the weakest / most
+        # miss-like boundary notes — NEVER shed a solid interior hit into a break
+        # just to tighten the window's total timing. The old "lowest total qpos"
+        # tiebreak shifted the protected run off a slightly-loose-but-cleanly-hit
+        # opening, which forced a break there and then dragged fabricated top-up
+        # misses onto the pristine intro (Jayceko taiko: misses shown on the first
+        # notes he clearly hit). Only after the boundary cost do we prefer the
+        # tighter run.
+        _EDGE = 1e12
         a, best = 0, None
         for s in range(0, n - Tw + 1):
             e = s + Tw
-            key = (pre_hm[e] - pre_hm[s], pre_q[e] - pre_q[s])
+            b_cost = 0.0
+            b_cost -= _EDGE if s == 0 else qpos[s - 1]
+            b_cost -= _EDGE if e >= n else qpos[e]
+            key = (pre_hm[e] - pre_hm[s], b_cost, pre_q[e] - pre_q[s])
             if best is None or key < best:
                 best, a = key, s
         b = a + Tw - 1
@@ -912,7 +925,15 @@ class TaikoSim:
         # breaking a combo the reference play holds clean for 140+. Rank the pool
         # by distance to the nearest chosen miss first, then by miss-likeness.
         if len(chosen) < M:
-            anchors = sorted(chosen)
+            # Cluster each extra next to a REAL honest miss (an actual burst) —
+            # NOT next to the structural protected-run boundary trims, which sit
+            # against clean runs and dragged fabricated misses onto the pristine
+            # opening (Jayceko taiko). Fall back to all chosen only when the sim
+            # found no honest miss at all (nothing else to cluster around). Also
+            # never fabricate a miss on a note the sweep hit inside the GREAT window
+            # (a rock-solid hit is not a plausible miss); rank the rest by
+            # miss-likeness.
+            anchors = sorted(p for p in range(n) if hmiss[p]) or sorted(chosen)
 
             def _cluster_dist(p):
                 j = bisect.bisect_left(anchors, p)
@@ -923,8 +944,20 @@ class TaikoSim:
                 return best
 
             pool = sorted((p for p in range(n)
-                           if p not in chosen and p not in protect),
+                           if p not in chosen and p not in protect
+                           and qpos[p] > self.sweep_great_w),
                           key=lambda p: (_cluster_dist(p), -qpos[p], p))
+            for p in pool:
+                if len(chosen) >= M:
+                    break
+                chosen.add(p)
+        # (d2) if excluding great-timed hits left us short (rare — the only spare
+        # notes are all great-timed), relax that guard and rank purely by
+        # miss-likeness so we still reach exactly M.
+        if len(chosen) < M:
+            pool = sorted((p for p in range(n)
+                           if p not in chosen and p not in protect),
+                          key=lambda p: (-qpos[p], p))
             for p in pool:
                 if len(chosen) >= M:
                     break
