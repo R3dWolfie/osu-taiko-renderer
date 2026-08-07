@@ -1,5 +1,5 @@
 """Argon taiko HUD: score (top-left), accuracy + PP (top-right), combo
-(bottom-left), key counter B1–B4 (bottom-right), song progress (bottom).
+(bottom-left), key counter F/D/J/K (bottom-right), song progress (bottom).
 Numbers use the Argon counter font; labels use Torus — matching lazer's
 ArgonScoreCounter / ArgonAccuracyCounter / ArgonComboCounter / etc.
 """
@@ -14,6 +14,12 @@ from .font import get_font
 _LABEL = (188, 200, 214)          # muted Torus label colour
 _WHITE = (255, 255, 255)
 _ACCENT = (0x66, 0xcc, 0xff)      # Argon blue
+
+# osu!(lazer) default taiko key bindings, in this HUD's counter order
+# (rim-L, centre-L, centre-R, rim-R): LeftDon=D, LeftKat=F, RightDon=J,
+# RightKat=K → the labels the in-game key counter shows, not generic B1..B4.
+# (std/catch show their real keys too; mania shows keys per-column instead.)
+_KEY_LABELS = ("F", "D", "J", "K")
 
 # osu! mod bitmask → acronym (display order matters: difficulty then time then fl)
 _MODS = [(1 << 1, "EZ"), (1 << 4, "HR"), (1 << 0, "NF"), (1 << 3, "HD"),
@@ -214,7 +220,7 @@ class ArgonHud:
         return np.clip(out, 0, 255).astype(np.uint8)
 
     def _key_active(self, t, window=110):
-        """Whether each key (B1..B4 = rim-L, centre-L, centre-R, rim-R) had a
+        """Whether each key (F/D/J/K = rim-L, centre-L, centre-R, rim-R) had a
         press within the last `window` ms — lights its activity bar."""
         import bisect
         out = []
@@ -323,18 +329,18 @@ class ArgonHud:
             _blit(rgb, self._label("COMBO", lab_px, color=_ACCENT),
                   mx, h - my - ctex.shape[0] - int(lab_px * 0.4), "bl")
 
-        # --- key counter B1–B4 (bottom-right): activity bar / label / count,
+        # --- key counter F/D/J/K (bottom-right): activity bar / label / count,
         # each column centred (ArgonKeyCounter layout) ---
         counts = self.sim.key_counts(t)
         active = self._key_active(t)
         kw = int(w * 0.042)
         right = w - mx
         bar_w, bar_h = int(kw * 0.62), max(2, int(h * 0.004))
-        for i in range(4):           # left→right B1..B4
+        for i in range(4):           # left→right: rim-L, centre-L, centre-R, rim-R
             c = counts[i]
             cx = right - (3 - i) * kw - kw // 2
             num = self.bold.render(str(c), int(h * 0.026), color=_WHITE)
-            lab = self.bold.render(f"B{i + 1}", lab_px, color=_LABEL)
+            lab = self.bold.render(_KEY_LABELS[i], lab_px, color=_LABEL)
             base_y = h - my
             _blit(rgb, num, cx, base_y, "bc")
             _blit(rgb, lab, cx, base_y - num.shape[0] - 2, "bc")
