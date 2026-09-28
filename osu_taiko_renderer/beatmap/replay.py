@@ -19,6 +19,7 @@ from pathlib import Path
 from osrparse import Replay
 
 from osu_taiko_renderer.beatmap.models import ReplayMeta, TaikoFrame
+from osu_taiko_renderer.security import bounded_lzma_decompress, validate_replay_payload
 
 _SEED_DELTA = -12345
 _DON_BITS = 1 | 4   # M1, K1 (centre)
@@ -94,8 +95,11 @@ def _recover_leadin_offset(path: Path) -> int:
         off += 8                       # timestamp (int64)
         rlen = struct.unpack_from("<i", data, off)[0]
         off += 4                       # replay-data length (int32)
-        raw = lzma.decompress(data[off:off + rlen],
-                              format=lzma.FORMAT_AUTO).decode("ascii", "replace")
+        if rlen < 0 or rlen > len(data) - off:
+            raise ValueError("invalid replay payload length")
+        raw = bounded_lzma_decompress(
+            data[off:off + rlen], format=lzma.FORMAT_AUTO
+        ).decode("ascii", "replace")
 
         lead = 0
         for i, group in enumerate(raw.rstrip(",").split(",")):
@@ -193,9 +197,9 @@ def _detect_classic(path: Path, game_version: int) -> bool:
             return False
         compressed = buf[pos:pos + length]
         try:
-            raw = lzma.decompress(compressed, format=lzma.FORMAT_ALONE)
+            raw = bounded_lzma_decompress(compressed, format=lzma.FORMAT_ALONE)
         except lzma.LZMAError:
-            raw = lzma.decompress(compressed, format=lzma.FORMAT_AUTO)
+            raw = bounded_lzma_decompress(compressed, format=lzma.FORMAT_AUTO)
         info = json.loads(raw.decode("utf-8"))
         mods = info.get("mods") or []
         return any(
@@ -211,6 +215,7 @@ def parse_replay(path: Path) -> tuple[list[TaikoFrame], ReplayMeta]:
     if not path.exists():
         raise ReplayParseError(f"replay not found: {path}")
     try:
+        validate_replay_payload(path)
         r = Replay.from_path(path)
     except Exception as e:  # noqa: BLE001 - osrparse raises bare exceptions
         raise ReplayParseError(f"osrparse failed: {e}") from e

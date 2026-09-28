@@ -21,6 +21,8 @@ from pathlib import Path
 
 import numpy as np
 
+from osu_taiko_renderer.security import ffmpeg_file_input_args
+
 from osu_taiko_renderer.beatmap.models import TaikoType
 
 MISS = "miss"
@@ -52,7 +54,7 @@ def _decode_pcm(path: Path) -> np.ndarray | None:
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         return None
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(path),
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", *ffmpeg_file_input_args(path),
            "-f", "f32le", "-acodec", "pcm_f32le",
            "-ar", str(SAMPLE_RATE), "-ac", str(CHANNELS), "pipe:1"]
     try:

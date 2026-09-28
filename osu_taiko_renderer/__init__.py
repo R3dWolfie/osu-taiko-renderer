@@ -9,5 +9,12 @@ Pipeline: parse .osu -> generate catch objects -> parse .osr -> per-frame
 scene (falling fruit + catcher from replay) -> GL draw -> ffmpeg encode.
 """
 
+import warnings
+
+from PIL import Image
+
+Image.MAX_IMAGE_PIXELS = 50_000_000
+warnings.simplefilter("error", Image.DecompressionBombWarning)
+
 __all__ = ["__version__"]
 __version__ = "0.1.0"

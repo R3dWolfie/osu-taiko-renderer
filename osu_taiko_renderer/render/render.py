@@ -27,6 +27,7 @@ from osu_taiko_renderer.render.gl import SpriteRenderer
 from osu_taiko_renderer.beatmap.models import RenderConfig
 from osu_taiko_renderer.beatmap.replay import parse_replay
 from osu_taiko_renderer.render.scene import TaikoSim
+from osu_taiko_renderer.security import ffmpeg_file_input_args, safe_related_file
 
 log = logging.getLogger(__name__)
 
@@ -119,10 +120,8 @@ def render_taiko(
     bm = parse_beatmap(osu_path, mods=meta.mods)
     if not bm.objects:
         raise TaikoRenderError(f"no hit objects parsed from {osu_path.name}")
-    audio = bm.audio_filename and (beatmap_dir / bm.audio_filename)
-    audio = audio if (audio and audio.is_file()) else None
-    bg = bm.background and (beatmap_dir / bm.background)
-    bg = bg if (bg and bg.is_file()) else None
+    audio = safe_related_file(beatmap_dir, bm.audio_filename)
+    bg = safe_related_file(beatmap_dir, bm.background)
     return render_core(bm, frames, meta, output_path, cfg, audio=audio, bg=bg,
                        progress_callback=progress_callback, osu_path=osu_path)
 
@@ -751,7 +750,7 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
                                    general_volume=cfg.general_volume,
                                    audio_offset_ms=cfg.audio_offset_ms, is_nc=is_nc)
         audio_input, music_chain = _resolve_music_audio(audio, _pre, _post)
-        cmd += ["-i", str(audio_input)]
+        cmd += ffmpeg_file_input_args(audio_input)
     if audio is not None and hitsound is not None:
         cmd += ["-i", str(hitsound)]
 
@@ -960,7 +959,8 @@ def _build_loudnorm_cache(source: Path, pre: str, cache_path: Path) -> bool:
     try:
         subprocess.run(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-             "-i", str(source), "-af", pre, "-c:a", "pcm_f64le", "-f", "wav", tmp],
+             *ffmpeg_file_input_args(source), "-af", pre,
+             "-c:a", "pcm_f64le", "-f", "wav", tmp],
             check=True, stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         if os.path.getsize(tmp) < 1024:
