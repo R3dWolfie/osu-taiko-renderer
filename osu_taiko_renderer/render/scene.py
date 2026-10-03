@@ -1144,10 +1144,14 @@ class TaikoSim:
         acc = (great + ok * 0.5) / tot if tot else 1.0
         return combo, great, ok, miss, score, acc, self._hp_at(t, hp)
 
-    def compute_pp_curve(self, osu_path, mods):
+    def compute_pp_curve(self, osu_path, mods, clock_rate=None):
         """Final taiko pp via rosu-pp (if available in the venv). The live HUD
         counter scales it by play progress in build_scene; the end value matches
-        the play's actual pp. Fails soft to 0 if rosu-pp is missing."""
+        the play's actual pp. Fails soft to 0 if rosu-pp is missing.
+
+        `clock_rate` (--rate): the play's TRUE clock-rate multiplier (lazer
+        custom speed_change). When set it pins rosu's clock rate so a e.g.
+        1.16x-DT play is not scored as full 1.5x DT. None -> unchanged."""
         self.pp = 0.0
         self._final_pp = 0.0
         try:
@@ -1171,6 +1175,8 @@ class TaikoSim:
                 misses=int(getattr(m, "count_miss", 0) or 0),
                 combo=int(getattr(m, "max_combo", 0) or 0),
             )
+            if clock_rate:
+                perf.set_clock_rate(float(clock_rate))
             self._final_pp = float(perf.calculate(bm).pp)
         except Exception:  # noqa: BLE001
             self._final_pp = 0.0

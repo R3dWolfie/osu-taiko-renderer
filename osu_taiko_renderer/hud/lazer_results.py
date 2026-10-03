@@ -796,11 +796,14 @@ def _bake_area_chart(values: list, w: int, h: int,
 
 # --- data helpers --------------------------------------------------------------------
 
-def _compute_stars_pp(osu_path, mods: int, meta, sim=None):
+def _compute_stars_pp(osu_path, mods: int, meta, sim=None, clock_rate=None):
     """(stars, pp, max_pp) for taiko via rosu-pp with the Taiko-ruleset
     conversion (mirroring scene.compute_pp_curve). `pp` PREFERS the sim's
     already-computed final pp so the number matches the gameplay HUD exactly.
     `max_pp` = the perfect-play (SS) pp for the stage-2 PERFORMANCE footer.
+    `clock_rate` (--rate): the play's TRUE clock rate (lazer custom
+    speed_change) — pins rosu's clock rate for stars/pp/max_pp so a custom-rate
+    play is not scored as full 1.5x DT. None -> unchanged.
     Fail-soft → (None, None, None)."""
     pp_pipeline = None
     stars_pipeline = None
@@ -828,7 +831,10 @@ def _compute_stars_pp(osu_path, mods: int, meta, sim=None):
                 pass
         stars = None
         try:
-            stars = float(rosu.Difficulty(mods=int(mods)).calculate(rbm).stars)
+            diff = rosu.Difficulty(mods=int(mods))
+            if clock_rate:
+                diff.set_clock_rate(float(clock_rate))
+            stars = float(diff.calculate(rbm).stars)
         except Exception:  # noqa: BLE001 — stars are optional
             stars = None
         if stars_pipeline is not None:      # --sr override wins over rosu SR
@@ -836,19 +842,25 @@ def _compute_stars_pp(osu_path, mods: int, meta, sim=None):
         pp = pp_pipeline
         if pp is None:
             try:
-                pp = float(rosu.Performance(
+                perf = rosu.Performance(
                     mods=int(mods),
                     n300=int(getattr(meta, "count_300", 0) or 0),
                     n100=int(getattr(meta, "count_100", 0) or 0),
                     misses=int(getattr(meta, "count_miss", 0) or 0),
                     combo=int(getattr(meta, "max_combo", 0) or 0),
-                ).calculate(rbm).pp)
+                )
+                if clock_rate:
+                    perf.set_clock_rate(float(clock_rate))
+                pp = float(perf.calculate(rbm).pp)
             except Exception:  # noqa: BLE001 — pp is optional
                 pp = None
         max_pp = None
         try:
             # no hitresults → rosu assumes a perfect play (the SS ceiling)
-            max_pp = float(rosu.Performance(mods=int(mods)).calculate(rbm).pp)
+            perf_max = rosu.Performance(mods=int(mods))
+            if clock_rate:
+                perf_max.set_clock_rate(float(clock_rate))
+            max_pp = float(perf_max.calculate(rbm).pp)
         except Exception:  # noqa: BLE001 — the ceiling is optional
             max_pp = None
         return stars, pp, max_pp
@@ -856,10 +868,11 @@ def _compute_stars_pp(osu_path, mods: int, meta, sim=None):
         return stars_pipeline, pp_pipeline, None
 
 
-def _compute_strains(osu_path, mods: int) -> list[float]:
+def _compute_strains(osu_path, mods: int, clock_rate=None) -> list[float]:
     """The rosu-pp TAIKO strain curve (colour + rhythm + stamina, summed) —
     map difficulty over time, the stage-2 COMBO panel's fallback chart when
-    the sim's combo series isn't available. Fail-soft → []."""
+    the sim's combo series isn't available. `clock_rate` (--rate) pins rosu's
+    clock rate like _compute_stars_pp. Fail-soft → []."""
     if osu_path is None:
         return []
     try:
@@ -870,7 +883,10 @@ def _compute_strains(osu_path, mods: int) -> list[float]:
                 rbm.convert(rosu.GameMode.Taiko, int(mods))
         except Exception:  # noqa: BLE001 — conversion refusal → raw map
             pass
-        st = rosu.Difficulty(mods=int(mods)).strains(rbm)
+        diff = rosu.Difficulty(mods=int(mods))
+        if clock_rate:
+            diff.set_clock_rate(float(clock_rate))
+        st = diff.strains(rbm)
         cols = [list(getattr(st, a, None) or [])
                 for a in ("color", "rhythm", "stamina")]
         cols = [c for c in cols if c]
@@ -980,8 +996,11 @@ class CatchLazerResults:
                              "SH": "S"}.get(self.grade, self.grade)
         self.grade_rgb = FOR_RANK.get(self.grade, (0.8, 0.8, 0.85))
         self.target_arc = target_arc_value(self.acc_frac, self.grade)
+        # --rate: the play's TRUE clock rate carried on the parsed beatmap
+        # (None unless the service passed --rate) — pins the rosu clock rate.
+        self._clock_rate = getattr(bm, "rate_override", None)
         self.stars, self.pp, self.max_pp = _compute_stars_pp(
-            osu_path, meta.mods, meta, sim)
+            osu_path, meta.mods, meta, sim, clock_rate=self._clock_rate)
 
         # --- stage-2 source data (real taiko data; never faked) -------------
         # combo-over-time from the taiko sim's per-object cumulative snapshots
@@ -1223,7 +1242,9 @@ class CatchLazerResults:
                 f"break{'' if len(breaks) == 1 else 's'}",
                 int(18 * k), foot_col)
         else:
-            strains = _compute_strains(self._osu_path, int(m.mods or 0))
+            strains = _compute_strains(self._osu_path, int(m.mods or 0),
+                                       clock_rate=getattr(self, "_clock_rate",
+                                                          None))
             if len(strains) >= 4:
                 self.combo_title = bake_text("DIFFICULTY", int(22 * k),
                                              title_col)

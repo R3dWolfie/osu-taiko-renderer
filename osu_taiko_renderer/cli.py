@@ -60,6 +60,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="EXACT star rating to show (osu's OFFICIAL SR). The "
                          "results card's star-rating pill is pinned to this. "
                          "Omit to keep the rosu SR estimate.")
+    ap.add_argument("--rate", type=float, default=None,
+                    help="the play's TRUE clock-rate multiplier (lazer custom "
+                         "speed_change, e.g. 1.16). When set it OVERRIDES the "
+                         "mods-bitmask rate (DT/NC 1.5, HT 0.75) for BOTH the "
+                         "render timing + audio atempo AND the rosu pp/SR "
+                         "calls. Omit to keep the bitmask rate (unchanged "
+                         "behaviour).")
     ap.add_argument("--hit-counter", action=BA, default=True)
     ap.add_argument("--beatmap-hitsounds", action=BA, default=True,
                     help="use the beatmap's custom hitsounds (off = skin/default only)")
@@ -139,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         show_hit_counter=args.hit_counter,
         pp_override=args.pp,
         sr_override=args.sr,
+        rate_override=args.rate,
         watermark=args.watermark,
         music_volume=args.music_volume,
         general_volume=args.general_volume,

@@ -97,6 +97,11 @@ class TaikoBeatmap:
     artist: str = ""
     version: str = ""
     rate: float = 1.0   # DT/NC=1.5, HT=0.75; object times stay in map-time
+    # the play's TRUE clock rate when the service passed --rate (lazer custom
+    # speed_change, e.g. 1.16). None = no override -> `rate` above came from the
+    # mods bitmask. When set, `rate` already equals this value; rosu pp/SR
+    # calls additionally pin their clock rate to it (set_clock_rate).
+    rate_override: float | None = None
     bar_lines: list = field(default_factory=list)  # [(time_ms, scroll_vel, major)]
     kiai_ranges: list = field(default_factory=list)  # [(start_ms, end_ms)]
     timing: object = None                            # _Timing (beat grid for kiai)
@@ -209,6 +214,12 @@ class RenderConfig:
     # star-rating pill shows this value exactly. Static display value (there is
     # no live SR counter). Mirrors pp_override -- see render.py.
     sr_override: float | None = None
+    # the play's TRUE clock-rate multiplier (passed by the service via --rate,
+    # e.g. a lazer custom speed_change of 1.16). None -> keep the mods-bitmask
+    # rate (DT/NC 1.5, HT 0.75; unchanged behaviour). When set it overrides the
+    # bitmask rate for the render timing + audio atempo AND pins the rosu pp/SR
+    # clock rate. Mirrors pp_override/sr_override -- see render.py.
+    rate_override: float | None = None
     # intro R3D "R" splash (parity with std/catch show_logo; off by default so
     # existing renders are unchanged)
     show_logo: bool = False

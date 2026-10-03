@@ -116,7 +116,8 @@ def render_taiko(
     cfg = cfg or RenderConfig()
     frames, meta = parse_replay(osr_path)
     osu_path = _find_osu(beatmap_dir, meta.beatmap_md5)
-    bm = parse_beatmap(osu_path, mods=meta.mods)
+    bm = parse_beatmap(osu_path, mods=meta.mods,
+                       rate_override=getattr(cfg, "rate_override", None))
     if not bm.objects:
         raise TaikoRenderError(f"no hit objects parsed from {osu_path.name}")
     audio = bm.audio_filename and (beatmap_dir / bm.audio_filename)
@@ -222,7 +223,10 @@ def render_core(
     skin = None
     sim = TaikoSim(bm, frames, cfg, skin=skin, has_bg=bg is not None, meta=meta)
     if cfg.show_pp_counter and osu_path is not None:
-        sim.compute_pp_curve(osu_path, meta.mods)
+        # --rate: pin rosu's clock rate to the play's TRUE rate (a lazer custom
+        # speed_change) instead of the mods-bitmask 1.5/0.75. None -> unchanged.
+        sim.compute_pp_curve(osu_path, meta.mods,
+                             clock_rate=getattr(bm, "rate_override", None))
     # --pp: pin the FINAL pp (results card + live-counter endpoint) to the EXACT
     # value passed by the dispatch layer (osu's OFFICIAL pp). The live curve
     # keeps its rosu/score-progress SHAPE — build_scene computes the live counter
@@ -766,8 +770,12 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
         # 2070S -- the raw-frame producer was backpressuring on the encoder.
         # Same bitrate ladder/VBR caps, so quality stays visually equivalent.
         _tgt = cfg.video_bitrate or nvenc_target_bps(w, h, cfg.fps)
+        # CQ23 quality-targeted VBR (quality-approved 2026-09-02): visually
+        # identical to the fixed-target ladder, ~17% smaller; the ladder is
+        # kept only as the -maxrate/-bufsize cap below.
         cmd += ["-c:v", "h264_nvenc", "-preset", "p3", "-pix_fmt", "yuv420p",
-                "-b:v", str(_tgt), "-maxrate", str(int(_tgt * 1.5)),
+                "-rc", "vbr", "-cq", "23", "-b:v", "0",
+                "-maxrate", str(int(_tgt * 1.5)),
                 "-bufsize", str(_tgt * 2)]
     else:
         if cfg.video_bitrate:

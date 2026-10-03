@@ -91,7 +91,8 @@ def _drop_degenerate_objects(objects: list) -> tuple[list, int]:
     return kept, n0 - len(kept)
 
 
-def parse_beatmap(path: Path, *, mods: int = 0, lazer: bool = False) -> TaikoBeatmap:
+def parse_beatmap(path: Path, *, mods: int = 0, lazer: bool = False,
+                  rate_override: float | None = None) -> TaikoBeatmap:
     text = path.read_text(encoding="utf-8", errors="replace")
     sections = _split_sections(text)
 
@@ -120,6 +121,14 @@ def parse_beatmap(path: Path, *, mods: int = 0, lazer: bool = False) -> TaikoBea
     dt = bool(mods & (1 << 6)) or bool(mods & (1 << 9))
     ht = bool(mods & (1 << 8))
     rate = 1.5 if dt else (0.75 if ht else 1.0)
+    # --rate: the play's TRUE clock rate (lazer custom speed_change, e.g. a
+    # 1.16x DT). When the service passes it, it REPLACES the bitmask rate —
+    # in lazer the SpeedChange bindable IS the track rate (DT merely defaults
+    # it to 1.5), so a custom-rate DT play is NOT 1.5x. None/<=0 -> unchanged.
+    if rate_override is not None and rate_override > 0:
+        rate = float(rate_override)
+    else:
+        rate_override = None
 
     timing = _parse_timing(sections.get("TimingPoints", ""))
     # SliderMultiplier IS lazer's taiko Velocity — it drives the scroll speed
@@ -158,7 +167,7 @@ def parse_beatmap(path: Path, *, mods: int = 0, lazer: bool = False) -> TaikoBea
         bar_lines=bar_lines,
         kiai_ranges=kiai,
         timing=timing,
-        cs=cs, ar=ar, od=od, hp=hp, rate=rate,
+        cs=cs, ar=ar, od=od, hp=hp, rate=rate, rate_override=rate_override,
         audio_filename=general.get("AudioFilename"),
         background=_parse_background(sections.get("Events", "")),
         breaks=_parse_breaks(sections.get("Events", "")),
