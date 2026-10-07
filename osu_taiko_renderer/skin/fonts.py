@@ -23,6 +23,15 @@ from pathlib import Path
 
 from PIL import ImageFont
 
+# The HUD's own font, DejaVu Sans Bold, ships with the engine and is used
+# ahead of any system font, so every platform draws the same glyphs. Before,
+# a Linux node drew DejaVu, a Mac drew Arial Bold (or, where no listed path
+# existed, Pillow's built-in font at about 10 px whatever size was asked for).
+# The file is the one Ubuntu 24.04 installs (2.37, sha256 5c1247ac...2ce895),
+# which is what the Linux nodes were already drawing with. A font inside the
+# skin folder still wins. Licence: assets/fonts/LICENSE_DEJAVU.txt.
+_BUNDLED_FONT = str(Path(__file__).resolve().parents[1] / "assets" / "fonts" / "DejaVuSans-Bold.ttf")
+
 _SYSTEM_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Debian/Ubuntu (FoofPC)
     "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",              # Arch
@@ -65,6 +74,8 @@ def _find_skin_font(skin_dir) -> str | None:
 def _resolve_path() -> str | None:
     if _skin_font_path and Path(_skin_font_path).is_file():
         return _skin_font_path
+    if Path(_BUNDLED_FONT).is_file():
+        return _BUNDLED_FONT
     for p in _SYSTEM_CANDIDATES:
         if Path(p).is_file():
             return p
