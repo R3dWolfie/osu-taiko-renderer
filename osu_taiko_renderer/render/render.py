@@ -1735,7 +1735,131 @@ def _build_loudnorm_cache(source: Path, pre: str, cache_path: Path) -> bool:
         return False
 
 
-def _resolve_music_audio(audio: Path, pre: str, post: str):
+# --- loudness by ONE fixed gain (R3D_TAIKO_FIXED_GAIN=1 / R3D_FIXED_GAIN=1) ----
+# Default OFF. The one-pass loudnorm filter is the whole cost of building a
+# song's cache entry: 17.5 s for a 482 s song that takes 0.5 s to decode (it
+# works at 192 kHz, on one thread). With the switch the build instead measures
+# the integrated loudness (ffmpeg `ebur128`) at the point loudnorm stood, and
+# applies ONE gain for the whole track to the same -18 LUFS, held back where it
+# would put a sample above the same -1.5 dB: about a second. NOT the same
+# sound: one-pass loudnorm moves its gain as the track goes (it lifts quiet
+# passages); a fixed gain leaves the track's own dynamics alone. Hence a switch.
+# Same numbers as the std / catch / mania engines. The entry is the same kind
+# of file (pcm_f64le WAV) under its own key; everything downstream is untouched.
+_FG_TARGET_LUFS = -18.0
+_FG_PEAK_CEILING_DB = -1.5
+_FG_EBUR128 = "ebur128=framelog=quiet"
+_FG_PARAM = f"fixedgain:I={_FG_TARGET_LUFS:g}:P={_FG_PEAK_CEILING_DB:g}"
+_FG_NOTHING_LUFS = -70.0   # what ebur128 reports when nothing passed its gate
+
+
+def _fg_parse_lufs(stderr_text: str) -> "float | None":
+    """The integrated loudness out of ffmpeg's `ebur128` summary; None when
+    there is no summary to read. Silence reads -70.0."""
+    import re
+    m = re.findall(r"^\s*I:\s+(-?\d+(?:\.\d+)?) LUFS", stderr_text, re.M)
+    return float(m[-1]) if m else None
+
+
+def _fg_gain_db(integrated_lufs: "float | None", peak: float) -> float:
+    """dB for the whole track: up or down to the target, never so far up that
+    the loudest sample (`peak`, linear) passes the ceiling. Silence is left as
+    it is."""
+    import math
+    if integrated_lufs is None or integrated_lufs <= _FG_NOTHING_LUFS:
+        return 0.0
+    gain = _FG_TARGET_LUFS - integrated_lufs
+    if peak > 0.0:
+        gain = min(gain, _FG_PEAK_CEILING_DB - 20.0 * math.log10(peak))
+    return gain
+
+
+_FG_PIN_192K = "aformat=sample_rates=192000"
+
+
+def _fg_pre(pre: str) -> "str | None":
+    """`pre` with the measurement where its loudnorm stood (it is always the
+    last filter of `pre`); None if this is not a chain _audio_parts built.
+
+    loudnorm only takes 192 kHz and hands 192 kHz on. The same rate is pinned
+    in its place, for two reasons: (1) with it ffmpeg resamples BEFORE an
+    `atempo` (DT/HT), so the time-stretch is exactly stock's (measured: same
+    length to the sample, 0.999 correlation at lag 0; without the pin a
+    different stretch, 0.37); (2) the cache entry keeps stock's sample rate, so
+    everything downstream of it, the master's audio format included, is what
+    it is with the stock entry."""
+    if not pre.endswith(_LOUDNORM_FILTER):
+        return None
+    return pre[:-len(_LOUDNORM_FILTER)] + _FG_PIN_192K + "," + _FG_EBUR128
+
+
+def _wav_data_span(path) -> "tuple[int, int]":
+    """(offset, byte length) of the samples in a RIFF/WAVE file."""
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        head = f.read(12)
+        if head[:4] != b"RIFF" or head[8:12] != b"WAVE":
+            raise ValueError("not a wav")
+        pos = 12
+        while pos + 8 <= size:
+            f.seek(pos)
+            cid, clen = f.read(4), int.from_bytes(f.read(4), "little")
+            if cid == b"data":
+                return pos + 8, min(clen, size - pos - 8)
+            pos += 8 + clen + (clen & 1)
+    raise ValueError("no data chunk")
+
+
+def _build_fixed_gain_cache(source: Path, pre: str, cache_path: Path) -> bool:
+    """The fixed-gain build of a cache entry: run `pre` with the loudness
+    measured in place of loudnorm, apply the one gain to the samples, publish
+    atomically. False (fail-soft) when ffmpeg failed or printed no summary that
+    can be read: the caller then builds the stock entry."""
+    import tempfile
+    pre_m = _fg_pre(pre)
+    if pre_m is None:
+        return False
+    tmp = None
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".ln_", suffix=".wav",
+                                   dir=str(cache_path.parent))
+        os.close(fd)
+        # `info` is the level ebur128 prints its summary at
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-nostats", "-loglevel", "info",
+             "-i", str(source), "-af", pre_m, "-c:a", "pcm_f64le", "-f", "wav", tmp],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE)
+        lufs = _fg_parse_lufs((r.stderr or b"").decode(errors="replace"))
+        if r.returncode != 0 or os.path.getsize(tmp) < 1024 or lufs is None:
+            raise RuntimeError("no measurement")
+        off, nbytes = _wav_data_span(tmp)
+        pcm = np.memmap(tmp, dtype="<f8", mode="r+", offset=off,
+                        shape=(nbytes // 8,))
+        gain = _fg_gain_db(lufs, float(np.abs(pcm).max()) if pcm.size else 0.0)
+        pcm *= 10.0 ** (gain / 20.0)
+        pcm.flush()
+        del pcm
+        os.replace(tmp, cache_path)
+        print("[taiko-renderer] song loudness: "
+              + ("silent, left as it is" if lufs <= _FG_NOTHING_LUFS else
+                 f"{lufs:.1f} LUFS, one gain of {gain:+.1f} dB"),
+              file=sys.stderr, flush=True)
+        return True
+    except Exception as e:  # noqa: BLE001 — never let caching break a render
+        print(f"[taiko-renderer] fixed-gain cache build failed ({e}); "
+              f"the loudnorm filter", file=sys.stderr)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return False
+
+
+def _resolve_music_audio(audio: Path, pre: str, post: str,
+                         fixed_gain: "bool | None" = None):
     """Resolve the music input + its live filter chain, using the loudnorm cache
     when enabled. Returns (audio_input, music_chain):
       * cache hit  -> (cache_wav, post)         loudnorm SKIPPED (baked in cache)
@@ -1743,10 +1867,23 @@ def _resolve_music_audio(audio: Path, pre: str, post: str):
       * disabled / fallback -> (source, pre+','+post)   inline loudnorm
 
     music_chain is what runs live on the resolved input (post-only when the
-    cache supplies the loudnorm'd PCM, else the full chain)."""
+    cache supplies the loudnorm'd PCM, else the full chain).
+    `fixed_gain` None = follow the switch (render/envflag.py FIXED_GAIN)."""
     full = pre + "," + post if post else pre
     if not _loudnorm_cache_enabled():
         return audio, full
+    if _sw.FIXED_GAIN if fixed_gain is None else fixed_gain:
+        # one measured gain in place of the loudnorm pass (see above); if that
+        # entry cannot be built here, the stock one below
+        try:
+            fg_path = Path(_LOUDNORM_CACHE_DIR) / (
+                _loudnorm_cache_key(audio, (_fg_pre(pre) or pre) + "|" + _FG_PARAM)
+                + ".wav")
+            if _loudnorm_cache_valid(fg_path) \
+                    or _build_fixed_gain_cache(audio, pre, fg_path):
+                return fg_path, (post if post else "anull")
+        except OSError:
+            pass
     try:
         key = _loudnorm_cache_key(audio, pre)
     except OSError as e:

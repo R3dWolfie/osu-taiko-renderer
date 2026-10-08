@@ -68,6 +68,12 @@ GPU_YUV = envflag("R3D_TAIKO_GPU_YUV") and not STOCK
 # alpha lands one level apart as a vertex attribute (4 frames of the fixture).
 INSTANCED = envflag("R3D_TAIKO_INSTANCED") and not STOCK
 
+# Not a render-path speedup, and on by default nowhere: it changes the SOUND
+# (render.py, "loudness by one fixed gain"). The engine's own switch wins over
+# the node-wide R3D_FIXED_GAIN that every engine reads.
+FIXED_GAIN = (envflag("R3D_TAIKO_FIXED_GAIN", envflag("R3D_FIXED_GAIN"))
+              and not STOCK)
+
 # Is anything other than the stock render path in use? __main__ runs a render
 # that failed with any of these on again on the stock path.
 ANY_FAST = any((GPU_FX, GPU_FL, GPU_NUM, GPU_HUD, GPU_BREAK, MERGE_RUNS, ROUND,
