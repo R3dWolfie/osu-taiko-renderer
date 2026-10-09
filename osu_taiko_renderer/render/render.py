@@ -1142,10 +1142,13 @@ def _probe_encoder(cfg: RenderConfig) -> tuple[str, str | None]:
     # nvenc FIRST: R3D renders on NVIDIA (2070S / 1070). The old vaapi-first
     # auto-probe silently won over the far-faster nvenc whenever R3D_ENCODER
     # was unset — a landmine if the worker env ever drops.
-    if _ffmpeg_has("h264_nvenc"):
+    # a listed hardware encoder is tried with one frame before it is trusted
+    # (_encoder_starts); one that does not start is skipped
+    if _ffmpeg_has("h264_nvenc") and _encoder_starts("h264_nvenc", None):
         return "h264_nvenc", None
     dev = cfg.encoder_device or "/dev/dri/renderD128"
-    if Path(dev).exists() and _ffmpeg_has("h264_vaapi"):
+    if (Path(dev).exists() and _ffmpeg_has("h264_vaapi")
+            and _encoder_starts("h264_vaapi", dev)):
         return "h264_vaapi", dev
     return "libx264", None
 
@@ -1157,6 +1160,46 @@ def _ffmpeg_has(name: str) -> bool:
     except Exception:  # noqa: BLE001
         return False
     return name in out
+
+
+_ENCODER_PROBE_TIMEOUT_S = 5.0   # how long a hardware encoder may take to start
+
+
+def _encoder_starts(encoder: str, device: "str | None") -> bool:
+    """Does `encoder` really start here? One black 128x128 frame through it to
+    a null output. `ffmpeg -encoders` only says the encoder was COMPILED IN:
+    h264_nvenc is listed on a machine with no NVIDIA card, h264_vaapi on one
+    whose driver cannot encode, and until this check such an encoder was
+    chosen and the render died on its first frame. A probe that hangs is
+    killed at the timeout. R3D_ENCODER_PROBE=0 turns the check off (the
+    listing alone decides, as before).
+
+    The check and its command are the mania engine's (osu-mania-renderer #31,
+    TheAussie), made synchronous."""
+    if os.environ.get("R3D_ENCODER_PROBE", "1").strip().lower() \
+            in ("0", "false", "no", "off"):
+        return True
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
+    if encoder == "h264_vaapi":
+        cmd += ["-vaapi_device", device or "/dev/dri/renderD128"]
+    cmd += ["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "128x128", "-r", "1",
+            "-i", "pipe:0", "-frames:v", "1", "-an", "-vf",
+            "format=nv12,hwupload" if encoder == "h264_vaapi" else "format=yuv420p",
+            "-c:v", encoder, "-f", "null", "-"]
+    try:
+        r = subprocess.run(cmd, input=bytes(128 * 128 * 3), capture_output=True,
+                           timeout=_ENCODER_PROBE_TIMEOUT_S, check=False)
+        if r.returncode == 0:
+            return True
+        why = r.stderr.decode(errors="replace").strip().splitlines()
+        why = why[0][:300] if why else f"ffmpeg exit code {r.returncode}"
+    except subprocess.TimeoutExpired:
+        why = "encoder startup probe timed out"
+    except OSError as e:
+        why = str(e)
+    print(f"encoder: {encoder} is listed by ffmpeg but does not start here "
+          f"({why}); trying the next one", file=sys.stderr, flush=True)
+    return False
 
 
 # ---- libx264 knobs behind env hooks (same names in all four engines) --------
