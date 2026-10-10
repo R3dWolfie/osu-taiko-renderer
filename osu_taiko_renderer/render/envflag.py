@@ -58,6 +58,11 @@ ROUND = _fast("R3D_TAIKO_ROUND")
 MAP_READBACK = _fast("R3D_MAP_READBACK") and sys.platform == "darwin"
 SOCKET_PIPE = _fast("R3D_MAC_SOCKET_PIPE") and sys.platform == "darwin"
 RESULTS_AHEAD = _fast("R3D_TAIKO_RESULTS_AHEAD")
+# the readback ring's buffers declared GL_STREAM_READ (render/gl.py
+# _readback_ring). macOS only, like the mapped readback it serves: it goes
+# through the same handle on Apple's OpenGL, and that is where a map of a
+# buffer declared any other way costs ~0.5 ms a frame
+STREAM_READ = _fast("R3D_TAIKO_STREAM_READ") and sys.platform == "darwin"
 # Opt-in only, like INSTANCED below: measured 5-17% SLOWER than the set above on
 # replays with breaks, because a frame inside a break still needs the CPU and
 # takes the slow road (4-7% faster on replays without). Asked for, gl.py still
@@ -71,4 +76,5 @@ INSTANCED = envflag("R3D_TAIKO_INSTANCED") and not STOCK
 # Is anything other than the stock render path in use? __main__ runs a render
 # that failed with any of these on again on the stock path.
 ANY_FAST = any((GPU_FX, GPU_FL, GPU_NUM, GPU_HUD, GPU_BREAK, MERGE_RUNS, ROUND,
-                MAP_READBACK, SOCKET_PIPE, RESULTS_AHEAD, GPU_YUV, INSTANCED))
+                MAP_READBACK, SOCKET_PIPE, RESULTS_AHEAD, GPU_YUV, INSTANCED,
+                STREAM_READ))

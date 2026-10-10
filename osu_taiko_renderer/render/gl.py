@@ -84,6 +84,7 @@ if _DRAW_COUNT:
 
 
 _MAP_READBACK = _sw.MAP_READBACK
+_STREAM_READ = _sw.STREAM_READ
 # R3D_TAIKO_GPU_YUV: convert RGB -> yuv420p ON THE GPU and read back 1.5 bytes/px
 # instead of 3, feeding ffmpeg `-pix_fmt yuv420p` so swscale does no conversion at all.
 #
@@ -243,6 +244,7 @@ _WRITER_QUEUE_FRAMES = 4
 _PBO_MARGIN = 3
 
 _GL_PIXEL_PACK_BUFFER = 0x88EB
+_GL_STREAM_READ = 0x88E1
 _GL_MAP_READ_BIT = 0x0001
 _GL_MAP_WRITE_BIT = 0x0002
 _gl_c = None
@@ -261,6 +263,9 @@ def _load_gl_c():
         lib.glMapBufferRange.restype = ctypes.c_void_p
         lib.glUnmapBuffer.argtypes = [ctypes.c_uint]
         lib.glUnmapBuffer.restype = ctypes.c_ubyte
+        lib.glBufferData.argtypes = [ctypes.c_uint, ctypes.c_ssize_t,
+                                     ctypes.c_void_p, ctypes.c_uint]
+        lib.glBufferData.restype = None
         _gl_c = lib
     return _gl_c
 
@@ -973,6 +978,30 @@ class SpriteRenderer:
         self._yuv_vao_uv.render(moderngl.TRIANGLES)
         self.ctx.enable(moderngl.BLEND)
 
+    def _readback_ring(self, size: int, n: int) -> list:
+        """The n buffers frames are read back into, `size` bytes each.
+
+        R3D_TAIKO_STREAM_READ (on by default on a Mac): declare them
+        GL_STREAM_READ. ctx.buffer(reserve=...) asks for GL_STATIC_DRAW ("the
+        application fills it once, the GPU draws from it"); a readback buffer
+        is the opposite, the GPU writes it and the application reads it once.
+        On macOS that declaration decides what a map costs: every
+        glMapBufferRange of a STATIC_DRAW buffer took ~0.46 ms (1.1 s over
+        the 2,389-frame self-test), with the GPU already done; declared
+        STREAM_READ it returns at once. Same bytes either way, only the usage
+        hint changes. Found in mania first (its PR #37)."""
+        bufs = [self.ctx.buffer(reserve=size) for _ in range(n)]
+        if _STREAM_READ:
+            try:
+                g = _load_gl_c()
+                for b in bufs:
+                    g.glBindBuffer(_GL_PIXEL_PACK_BUFFER, b.glo)
+                    g.glBufferData(_GL_PIXEL_PACK_BUFFER, size, None, _GL_STREAM_READ)
+                g.glBindBuffer(_GL_PIXEL_PACK_BUFFER, 0)
+            except Exception:  # noqa: BLE001 - a hint, never the ring
+                pass
+        return bufs
+
     def read_yuv_async(self) -> "np.ndarray | None":
         """yuv420p twin of read_rgb_async: same PBO ring, same FIFO ordering, but
         1.5 bytes/px instead of 3. Returns a flat uint8 view (Y | U | V) ready to pipe.
@@ -988,7 +1017,7 @@ class SpriteRenderer:
             self._lat = _PBO_LAT
             n = ((_WRITER_QUEUE_FRAMES + 1 + 1 + self._lat + _PBO_MARGIN)
                  if _MAP_READBACK else self._PBO_RING)
-            self._pbos = [self.ctx.buffer(reserve=self._yuv_size) for _ in range(n)]
+            self._pbos = self._readback_ring(self._yuv_size, n)
             self._mapped = [False] * n
         self._convert_yuv()
         buf = self._unmap_for_write(self._pbo_head % len(self._pbos))
@@ -1069,7 +1098,7 @@ class SpriteRenderer:
             self._lat = _PBO_LAT
             n = ((_WRITER_QUEUE_FRAMES + 1 + 1 + self._lat + _PBO_MARGIN)
                  if _MAP_READBACK else self._PBO_RING)
-            self._pbos = [self.ctx.buffer(reserve=self._yuv_size) for _ in range(n)]
+            self._pbos = self._readback_ring(self._yuv_size, n)
             self._mapped = [False] * n
         buf = self._unmap_for_write(self._pbo_head % len(self._pbos))
         self._fbo_y.read_into(buf, components=1, alignment=1, write_offset=0)
@@ -1126,7 +1155,7 @@ class SpriteRenderer:
             # exactly the value it replaces.
             n = ((_WRITER_QUEUE_FRAMES + 1 + 1 + self._lat + _PBO_MARGIN)
                  if _MAP_READBACK else self._PBO_RING)
-            self._pbos = [self.ctx.buffer(reserve=size) for _ in range(n)]
+            self._pbos = self._readback_ring(size, n)
             self._mapped = [False] * n
         # GPU y-flip pass: mirror the scene into _flip_fbo (exact texel copy,
         # blending off), then queue the async read from THAT — the PBO then
