@@ -770,13 +770,21 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
                 "-b:v", str(_tgt), "-maxrate", str(int(_tgt * 1.5)),
                 "-bufsize", str(_tgt * 2)]
     else:
+        # CPU-encode thread cap (R3D host-governance, 2026-09): leave >=2
+        # logical cores free for the machine's owner. Uncapped, libx264 spawns
+        # threads on EVERY core at normal priority and can freeze a
+        # contributor's desktop (the rel/Stella "semi-crash"). Harmless on
+        # dedicated render boxes: libx264 is only the no-HW-encoder fallback.
+        # Same cap in all four engines (catch/taiko/std/mania v2).
+        _thr = ["-threads", str(max(2, (os.cpu_count() or 4) - 2))]
         if cfg.video_bitrate:
             _vb = int(cfg.video_bitrate)
             cmd += ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
                     "-b:v", str(_vb), "-maxrate", str(int(_vb * 1.5)),
-                    "-bufsize", str(_vb * 2)]
+                    "-bufsize", str(_vb * 2)] + _thr
         else:
-            cmd += ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-crf", "20"]
+            cmd += ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                    "-crf", "20"] + _thr
 
     if audio is not None:
         if hitsound is not None:
