@@ -95,8 +95,24 @@ class SkinDigitFont:
 
 
 class SkinHealthBar:
+    # A real scorebar-bg is a wide, thin bar. Skins (esp. catch/taiko ones that
+    # don't want an osu!-style HP bar) often ship a 1x1 - or otherwise tiny /
+    # non-bar-shaped - transparent scorebar-bg to HIDE it. Such an image carries
+    # no usable geometry: its ~square aspect drives bh ~= bw, then the colour
+    # frame is scaled by colour.h / bg.h - dividing by a ~1px bg height explodes
+    # the fill bar to tens of thousands of px tall (a ~200 MB array re-blitted
+    # every frame -> the HUD-blit CPU stall + OOM seen on a catch skin). Reject
+    # it (fall back to no skin HP bar; Argon taiko shows none anyway). A plausible
+    # bar is >= 3px tall and at least 4x as wide as it is tall.
+    _MIN_BAR_H = 3
+    _MIN_BAR_ASPECT = 4.0
+
     def __init__(self, skin):
         self.bg = skin.load("scorebar-bg") if skin is not None else None
+        if self.bg is not None and (
+                self.bg.shape[0] < self._MIN_BAR_H
+                or self.bg.shape[1] < self._MIN_BAR_ASPECT * self.bg.shape[0]):
+            self.bg = None
         self.frames = []
         if skin is not None:
             i = 0
@@ -124,12 +140,19 @@ class SkinHealthBar:
             return 0
         if self._bg_scaled is None:
             bw = int(w * 0.44)          # narrower than legacy so it clears the score
-            bh = max(1, int(bw * self.bg.shape[0] / self.bg.shape[1]))
+            # Absolute ceiling on the bar height: a real HP bar is a thin strip
+            # (~40-100px at 1080p); this only ever bites a pathological skin image
+            # whose aspect would otherwise scale the bar to thousands of px tall,
+            # so it never touches a normal skin but guarantees no skin can blow
+            # the per-frame blit array up (belt-and-suspenders to the __init__
+            # reject above).
+            _cap = max(1, int(h * 0.15))
+            bh = max(1, min(int(bw * self.bg.shape[0] / self.bg.shape[1]), _cap))
             self._bg_scaled = np.array(
                 Image.fromarray(self.bg).resize((bw, bh), Image.LANCZOS))
             if self.frames:
                 fr = self.frames[0]
-                fh = max(1, int(bh * (fr.shape[0] / self.bg.shape[0])))
+                fh = max(1, min(int(bh * (fr.shape[0] / self.bg.shape[0])), _cap))
                 fwf = max(1, int(bw * 0.92))
                 self._col_base = np.array(
                     Image.fromarray(fr).resize((fwf, fh), Image.LANCZOS))
