@@ -1133,15 +1133,180 @@ def render_core(
 
 # --- ffmpeg -------------------------------------------------------------------
 
+# ---- AV1 master encoding (Leon's AV1 migration, 2026-10-23) ------------------
+# AV1 is the MASTER codec (and, handled elsewhere, the site-only preview). The
+# Discord embed/compact copies STAY H.264 (Red established Discord cannot play
+# inline AV1), so the preview/compact branches further down are UNTOUCHED.
+#
+# Four hardware backends with DIFFERENT controls — deliberately NOT a mechanical
+# h264_* -> av1_* rename:
+#   av1_vaapi  AMD RDNA3 / Intel on Linux -> -rc_mode CQP -global_quality N
+#              (VAAPI IGNORES -qp; Leon's 7900 XTX sweep proved only
+#              -global_quality changes the output. Verified here 2026-10-23.)
+#   av1_nvenc  NVIDIA RTX 40              -> VBR bitrate ladder, like h264_nvenc
+#   av1_amf    AMD on Windows             -> VBR target bitrate
+#   av1_qsv    Intel Arc                  -> ICQ via -global_quality
+# All emit 8-bit 4:2:0 (yuv420p / nv12->vaapi surface), AV1 Main profile,
+# +faststart (via _mfast) and a ~2 s GOP. There is NO software-AV1
+# (libsvtav1/libaom/librav1e) and NO H.264 fallback for an AV1 master: a failed
+# AV1 encode FAILS the render and the coordinator requeues it onto an eligible
+# node (fail-closed; design §"Encoding and performance choices").
+_AV1_ENCODERS = ("av1_vaapi", "av1_nvenc", "av1_amf", "av1_qsv")
+_VAAPI_ENCODERS = ("h264_vaapi", "av1_vaapi")
+
+# CQP quality for av1_vaapi / ICQ for av1_qsv (LOWER = higher quality). Leon's
+# 7900 XTX results: global_quality 90 gave VMAF 95.5 at ~3.1 Mbit; the final
+# production number is Red's to set from measured quality/size, so it is
+# env-tunable rather than baked (design: "Final recipes depend on Red's
+# measurements, not a universal bitrate or QP").
+_AV1_VAAPI_GQ = os.environ.get("R3D_AV1_VAAPI_GLOBAL_QUALITY", "").strip() or "90"
+_AV1_QSV_GQ = os.environ.get("R3D_AV1_QSV_GLOBAL_QUALITY", "").strip() or "90"
+
+
+def _av1_gop(fps: float) -> int:
+    """~2 second GOP (Leon's qualification probe used -g 120 at 60 fps)."""
+    return max(1, int(round(float(fps))) * 2)
+
+
+def _av1_video_args(enc: str, w: int, h: int, fps: float,
+                    video_bitrate: "int | None") -> list:
+    """Master AV1 codec args for one backend: 8-bit 4:2:0, AV1 Main, ~2 s GOP.
+
+    Shared by the real-encode probe (_encoder_usable_av1) and _spawn_ffmpeg so
+    the probe proves the EXACT production recipe on the selected device. Backend
+    controls differ on purpose — see the _AV1_ENCODERS note above."""
+    gop = str(_av1_gop(fps))
+    if enc == "av1_vaapi":
+        # Frames are uploaded to an nv12 (8-bit 4:2:0) GPU surface. Rate control
+        # is CQP via -global_quality; -qp is IGNORED on VAAPI. The -vf is FIRST
+        # so the two-output filtergraph can lift it onto the master branch,
+        # exactly like the existing h264_vaapi branch.
+        args = ["-vf", "format=nv12,hwupload", "-c:v", "av1_vaapi",
+                "-profile:v", "main"]
+        if video_bitrate:
+            _vb = int(video_bitrate)
+            args += ["-rc_mode", "VBR", "-b:v", str(_vb),
+                     "-maxrate", str(int(_vb * 1.5))]
+        else:
+            args += ["-rc_mode", "CQP", "-global_quality", _AV1_VAAPI_GQ]
+        return args + ["-g", gop]
+    if enc == "av1_nvenc":
+        # NVENC AV1 (RTX 40): same resolution-scaled VBR ladder as h264_nvenc.
+        _tgt = video_bitrate or nvenc_target_bps(w, h, fps)
+        return ["-c:v", "av1_nvenc", "-preset", "p3", "-pix_fmt", "yuv420p",
+                "-profile:v", "main", "-rc", "vbr", "-b:v", str(_tgt),
+                "-maxrate", str(int(_tgt * 1.5)), "-bufsize", str(_tgt * 2),
+                "-g", gop]
+    if enc == "av1_amf":
+        # AMF AV1 (AMD on Windows): VBR target. UNTESTED on this Linux box —
+        # needs a Windows AMD validation pass (see handoff report).
+        _tgt = video_bitrate or nvenc_target_bps(w, h, fps)
+        return ["-c:v", "av1_amf", "-pix_fmt", "yuv420p", "-profile:v", "main",
+                "-rc", "vbr_latency", "-b:v", str(_tgt),
+                "-maxrate", str(int(_tgt * 1.5)), "-g", gop]
+    if enc == "av1_qsv":
+        # QSV AV1 (Intel Arc): ICQ via -global_quality. UNTESTED here — needs an
+        # Intel Arc validation pass (see handoff report).
+        return ["-c:v", "av1_qsv", "-pix_fmt", "nv12", "-profile:v", "main",
+                "-global_quality", _AV1_QSV_GQ, "-g", gop]
+    raise TaikoRenderError(f"unknown AV1 encoder {enc!r}")
+
+
+def _encoder_usable_av1(enc: str, device: "str | None",
+                        timeout: float = 20.0) -> "tuple[bool, str]":
+    """Prove a hardware AV1 backend by ENCODING one 128x128 frame on the
+    SELECTED device and confirming ffprobe reports codec_name=av1.
+
+    A compiled-in encoder, a matching GPU marketing name, or AV1 *decode*
+    support are NOT proof of hardware AV1 ENCODE — only a produced-and-verified
+    AV1 bitstream is (design: "Marketing names and ffmpeg -encoders are
+    candidate filters only. AV1 decoding support does not qualify"). Fail-closed:
+    any error, timeout, or non-av1 output makes the backend unusable, and the
+    caller never silently accepts it."""
+    import tempfile
+    tf = tempfile.NamedTemporaryFile(prefix="r3d_av1probe_", suffix=".mp4",
+                                     delete=False)
+    tf.close()
+    out = tf.name
+    try:
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
+        if enc == "av1_vaapi":
+            cmd += ["-vaapi_device", device or "/dev/dri/renderD128"]
+        cmd += ["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "128x128",
+                "-r", "1", "-i", "pipe:0", "-frames:v", "1", "-an"]
+        cmd += _av1_video_args(enc, 128, 128, 1.0, None) + [out]
+        try:
+            r = subprocess.run(cmd, input=bytes(128 * 128 * 3),
+                               capture_output=True, timeout=timeout, check=False)
+        except subprocess.TimeoutExpired:
+            return False, "av1 encode probe timed out"
+        except OSError as exc:
+            return False, f"cannot run ffmpeg: {exc}"
+        if r.returncode != 0:
+            # under -loglevel error the first line is the root cause (like std's
+            # _encoder_usable); later lines are cascade.
+            lines = r.stderr.decode(errors="replace").strip().splitlines()
+            return False, (lines[0][:400] if lines else f"ffmpeg exit {r.returncode}")
+        # The encode finished; now PROVE the bitstream is actually AV1.
+        try:
+            pr = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=codec_name", "-of",
+                 "default=nw=1:nk=1", out],
+                capture_output=True, text=True, timeout=timeout, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, f"ffprobe failed: {exc}"
+        codec = (pr.stdout or "").strip()
+        if codec != "av1":
+            return False, f"output codec_name={codec!r}, not av1"
+        return True, ""
+    finally:
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+
+
 def _probe_encoder(cfg: RenderConfig) -> tuple[str, str | None]:
-    if cfg.encoder != "auto":
-        # vaapi always needs a device for the hwupload filter; default it.
-        if cfg.encoder == "h264_vaapi":
+    # Explicit encoders stay explicit (incl. av1_* backends). vaapi always needs
+    # a device for the hwupload filter; default it. A failed explicit AV1 encode
+    # fails the render (no fallback) — the actual render IS the proof.
+    if cfg.encoder not in ("auto", "av1"):
+        if cfg.encoder in _VAAPI_ENCODERS:
             return cfg.encoder, cfg.encoder_device or "/dev/dri/renderD128"
         return cfg.encoder, cfg.encoder_device
-    # nvenc FIRST: R3D renders on NVIDIA (2070S / 1070). The old vaapi-first
-    # auto-probe silently won over the far-faster nvenc whenever R3D_ENCODER
-    # was unset — a landmine if the worker env ever drops.
+    if cfg.encoder == "av1":
+        # AUTO-pick a hardware AV1 backend, PROVED by a real encode whose output
+        # ffprobe confirms is AV1. Fail-closed: if none of the four backends
+        # produces AV1, RAISE — never fall back to H.264 / CPU / software AV1
+        # for an AV1 master; the job requeues onto an eligible node.
+        dev = cfg.encoder_device
+        if dev is None and Path("/dev/dri/renderD128").exists():
+            dev = "/dev/dri/renderD128"
+        candidates = ["av1_nvenc"]
+        if dev is not None:
+            candidates.append("av1_vaapi")
+        candidates += ["av1_amf", "av1_qsv"]
+        failures = []
+        for cand in candidates:
+            if not _ffmpeg_has(cand):
+                continue
+            usable, reason = _encoder_usable_av1(cand, dev)
+            if usable:
+                print(f"encoder: auto selected {cand} (verified AV1 output)",
+                      file=sys.stderr, flush=True)
+                return cand, (dev if cand == "av1_vaapi" else None)
+            failures.append(f"{cand}: {reason}")
+            print(f"encoder: {cand} unavailable: {reason}",
+                  file=sys.stderr, flush=True)
+        raise TaikoRenderError(
+            "no usable hardware AV1 encoder (fail-closed, no H.264/CPU "
+            "fallback for an AV1 master): "
+            + ("; ".join(failures) or "ffmpeg reports none of "
+               "av1_vaapi/av1_nvenc/av1_amf/av1_qsv"))
+    # H.264 auto (UNCHANGED). nvenc FIRST: R3D renders on NVIDIA (2070S / 1070).
+    # The old vaapi-first auto-probe silently won over the far-faster nvenc
+    # whenever R3D_ENCODER was unset — a landmine if the worker env ever drops.
     if _ffmpeg_has("h264_nvenc"):
         return "h264_nvenc", None
     dev = cfg.encoder_device or "/dev/dri/renderD128"
@@ -1292,7 +1457,7 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
     w, h = cfg.resolution
     enc, dev = _probe_encoder(cfg)
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
-    if enc == "h264_vaapi" and dev:
+    if enc in _VAAPI_ENCODERS and dev:
         cmd += ["-vaapi_device", dev]
     # GPU_YUV hands ffmpeg finished yuv420p, so swscale does NO conversion.
     # Read the SAME flag object the readback path uses, not the env var again --
@@ -1318,7 +1483,12 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
 
     # video codec + pixel path (collected in `vc`; appended below)
     vc: list = []
-    if enc == "h264_vaapi":
+    if enc in _AV1_ENCODERS:
+        # AV1 MASTER (Leon's migration). Backend-specific controls; 8-bit 4:2:0,
+        # Main profile. The Discord/preview branches below stay H.264. No
+        # software-AV1 or H.264 fallback: a failed AV1 encode fails the render.
+        vc += _av1_video_args(enc, w, h, cfg.fps, cfg.video_bitrate)
+    elif enc == "h264_vaapi":
         _vb = str(cfg.video_bitrate) if cfg.video_bitrate else "8M"
         vc += ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-b:v", _vb]
     elif enc == "h264_nvenc":
@@ -1419,8 +1589,9 @@ def _spawn_ffmpeg(cfg: RenderConfig, output_path: Path, audio: Path | None,
             preview_hw = False   # no known length to end the audio at: stay on x264
         _lead = ("," + _phw.vt_lead_in_filter(pfps)) if preview_hw else ""
         vm_tail = "null"
-        if enc == "h264_vaapi":
+        if enc in _VAAPI_ENCODERS:
             # the master's "-vf format=nv12,hwupload" moves into the graph
+            # (same for h264_vaapi and av1_vaapi — both upload to a GPU surface)
             vm_tail = "format=nv12,hwupload"
             vc = [x for i, x in enumerate(vc)
                   if not (x == "-vf" or (i and vc[i - 1] == "-vf"))]
