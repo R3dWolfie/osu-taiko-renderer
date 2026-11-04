@@ -1194,20 +1194,20 @@ def _av1_video_args(enc: str, w: int, h: int, fps: float,
         # NVENC AV1 (RTX 40): same resolution-scaled VBR ladder as h264_nvenc.
         _tgt = video_bitrate or nvenc_target_bps(w, h, fps)
         return ["-c:v", "av1_nvenc", "-preset", "p3", "-pix_fmt", "yuv420p",
-                "-profile:v", "main", "-rc", "vbr", "-b:v", str(_tgt),
+                "-rc", "vbr", "-b:v", str(_tgt),
                 "-maxrate", str(int(_tgt * 1.5)), "-bufsize", str(_tgt * 2),
                 "-g", gop]
     if enc == "av1_amf":
         # AMF AV1 (AMD on Windows): VBR target. UNTESTED on this Linux box —
         # needs a Windows AMD validation pass (see handoff report).
         _tgt = video_bitrate or nvenc_target_bps(w, h, fps)
-        return ["-c:v", "av1_amf", "-pix_fmt", "yuv420p", "-profile:v", "main",
+        return ["-c:v", "av1_amf", "-pix_fmt", "yuv420p",
                 "-rc", "vbr_latency", "-b:v", str(_tgt),
                 "-maxrate", str(int(_tgt * 1.5)), "-g", gop]
     if enc == "av1_qsv":
         # QSV AV1 (Intel Arc): ICQ via -global_quality. UNTESTED here — needs an
         # Intel Arc validation pass (see handoff report).
-        return ["-c:v", "av1_qsv", "-pix_fmt", "nv12", "-profile:v", "main",
+        return ["-c:v", "av1_qsv", "-pix_fmt", "nv12",
                 "-global_quality", _AV1_QSV_GQ, "-g", gop]
     raise TaikoRenderError(f"unknown AV1 encoder {enc!r}")
 
