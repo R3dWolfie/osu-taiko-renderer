@@ -691,7 +691,7 @@ def render_core(
 def _probe_encoder(cfg: RenderConfig) -> tuple[str, str | None]:
     if cfg.encoder != "auto":
         # vaapi always needs a device for the hwupload filter; default it.
-        if cfg.encoder == "h264_vaapi":
+        if cfg.encoder.endswith("_vaapi"):
             return cfg.encoder, cfg.encoder_device or "/dev/dri/renderD128"
         return cfg.encoder, cfg.encoder_device
     # nvenc FIRST: R3D renders on NVIDIA (2070S / 1070). The old vaapi-first
