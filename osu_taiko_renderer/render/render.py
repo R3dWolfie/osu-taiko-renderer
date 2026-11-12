@@ -1159,7 +1159,7 @@ _VAAPI_ENCODERS = ("h264_vaapi", "av1_vaapi")
 # production number is Red's to set from measured quality/size, so it is
 # env-tunable rather than baked (design: "Final recipes depend on Red's
 # measurements, not a universal bitrate or QP").
-_AV1_VAAPI_GQ = os.environ.get("R3D_AV1_VAAPI_GLOBAL_QUALITY", "").strip() or "90"
+_AV1_VAAPI_GQ = os.environ.get("R3D_AV1_VAAPI_GLOBAL_QUALITY", "").strip() or "30"
 _AV1_QSV_GQ = os.environ.get("R3D_AV1_QSV_GLOBAL_QUALITY", "").strip() or "90"
 
 
