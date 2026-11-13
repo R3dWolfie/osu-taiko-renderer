@@ -1732,7 +1732,7 @@ class TaikoSim:
         k_ui = self.h / 1080.0
         d = LOGO_UI_SIZE * k_ui * logo_scale(t, self.logo_start_ms)
         cx = self.w / 2.0
-        cy = self.h * 0.44
+        cy = self.h * 0.5
         return [
             Sprite(cx, cy, d * 1.9, d * 1.9, texture_key="logo_glow",
                    color=(0.95, 0.28, 0.30, 0.45 * la)),
