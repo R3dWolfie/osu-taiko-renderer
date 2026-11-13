@@ -5,7 +5,7 @@ What must hold:
     av1_vaapi uses `-rc_mode CQP -global_quality` (never `-qp`, which VAAPI
     ignores), av1_nvenc the VBR ladder, av1_qsv ICQ, av1_amf VBR; all emit
     8-bit 4:2:0 Main with a ~2 s GOP and +faststart;
-  * the auto `av1` probe selects a backend ONLY when a real 128x128 encode
+  * the auto `av1` probe selects a backend ONLY when a real 320x240 encode
     produces ffprobe codec_name=av1, and FAILS CLOSED (raises, no H.264 / CPU /
     software-AV1 fallback) when none does;
   * an AV1 master never changes the H.264 Discord embed/compact/preview copies;
@@ -284,15 +284,17 @@ def test_encoder_usable_av1_probe_command_shape():
         assert R._encoder_usable_av1("av1_vaapi", "/dev/dri/renderD129")[0]
     cmd = seen["cmd"]
     assert cmd[cmd.index("-vaapi_device") + 1] == "/dev/dri/renderD129"
-    assert cmd[cmd.index("-s") + 1] == "128x128"            # a tiny frame
-    assert len(seen["input"]) == 128 * 128 * 3
+    assert cmd[cmd.index("-s") + 1] == "320x240"            # clears the RX 9070 minimum width
+    assert cmd[cmd.index("-frames:v") + 1] == "5"
+    assert cmd[cmd.index("-r") + 1] == "5"
+    assert len(seen["input"]) == 320 * 240 * 3 * 5
     assert seen["timeout"] == 20 and cmd[cmd.index("-c:v") + 1] == "av1_vaapi"
 
 
 # ---- opt-in real hardware encode (R3D_AV1_HW_TEST=1) ------------------------
 
 def test_real_av1_vaapi_encode_is_actually_av1():
-    """One short 128x128 av1_vaapi encode on this machine, verified AV1. OPT-IN
+    """One short 320x240 av1_vaapi encode on this machine, verified AV1. OPT-IN
     (R3D_AV1_HW_TEST=1) so a plain pytest run does not load the GPU while other
     agents run."""
     if os.environ.get("R3D_AV1_HW_TEST") != "1":

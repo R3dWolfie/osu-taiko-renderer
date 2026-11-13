@@ -1214,7 +1214,7 @@ def _av1_video_args(enc: str, w: int, h: int, fps: float,
 
 def _encoder_usable_av1(enc: str, device: "str | None",
                         timeout: float = 20.0) -> "tuple[bool, str]":
-    """Prove a hardware AV1 backend by ENCODING one 128x128 frame on the
+    """Prove a hardware AV1 backend by ENCODING five 320x240 frames on the
     SELECTED device and confirming ffprobe reports codec_name=av1.
 
     A compiled-in encoder, a matching GPU marketing name, or AV1 *decode*
@@ -1232,11 +1232,12 @@ def _encoder_usable_av1(enc: str, device: "str | None",
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
         if enc == "av1_vaapi":
             cmd += ["-vaapi_device", device or "/dev/dri/renderD128"]
-        cmd += ["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "128x128",
-                "-r", "1", "-i", "pipe:0", "-frames:v", "1", "-an"]
-        cmd += _av1_video_args(enc, 128, 128, 1.0, None) + [out]
+        # RX 9070 AV1 requires at least 320px width; match catch/mania.
+        cmd += ["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "320x240",
+                "-r", "5", "-i", "pipe:0", "-frames:v", "5", "-an"]
+        cmd += _av1_video_args(enc, 320, 240, 5.0, None) + [out]
         try:
-            r = subprocess.run(cmd, input=bytes(128 * 128 * 3),
+            r = subprocess.run(cmd, input=bytes(320 * 240 * 3 * 5),
                                capture_output=True, timeout=timeout, check=False)
         except subprocess.TimeoutExpired:
             return False, "av1 encode probe timed out"
